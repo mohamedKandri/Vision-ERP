@@ -88,17 +88,17 @@ export function computeLine(l: LineInput): LineTotals {
  */
 export function allocate(amount: Cents, weights: number[]): Cents[] {
   assertInt(amount, "amount");
-  const sum = weights.reduce((a, b) => a + b, 0);
   if (weights.length === 0) return [];
+  weights.forEach((w) => assertInt(w, "weight"));
+  const sum = weights.reduce((a, b) => a + b, 0);
   if (sum === 0) return weights.map((_, i) => (i === 0 ? amount : 0));
   const sign = Math.sign(amount);
   const abs = Math.abs(amount);
-  const raw = weights.map((w) => (abs * w) / sum);
-  const parts = raw.map(Math.floor);
+  // Integer arithmetic only, so the Rust port gives bit-identical results.
+  const parts = weights.map((w) => Math.floor((abs * w) / sum));
+  const rems = weights.map((w, i) => abs * w - parts[i] * sum);
   let rest = abs - parts.reduce((a, b) => a + b, 0);
-  const order = raw
-    .map((r, i) => ({ i, frac: r - Math.floor(r) }))
-    .sort((a, b) => b.frac - a.frac || a.i - b.i);
+  const order = rems.map((r, i) => ({ i, r })).sort((a, b) => b.r - a.r || a.i - b.i);
   for (let k = 0; rest > 0; k++, rest--) parts[order[k % order.length].i]++;
   return parts.map((p) => p * sign);
 }

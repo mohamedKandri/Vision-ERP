@@ -92,9 +92,10 @@ pub fn seed_demo_menu(conn: &Connection, user_id: i64, tax_id: i64) -> ApiResult
             "tax_id": tax_id, "station_id": station, "active": true, "sort": sort, "variants": variants, "group_ids": groups
         }))?)
     };
-    let sdt = |s: i64, d: i64, t: Option<i64>| {
+    // `hh`: happy-hour price of the Single size (the size price always wins over the product price).
+    let sdt = |s: i64, d: i64, t: Option<i64>, hh: Option<i64>| {
         let mut v = vec![
-            json!({"names": n("Simple", "عادي", "Single"), "price_cents": s, "happy_hour_price_cents": null}),
+            json!({"names": n("Simple", "عادي", "Single"), "price_cents": s, "happy_hour_price_cents": hh}),
             json!({"names": n("Double", "مزدوج", "Double"), "price_cents": d, "happy_hour_price_cents": null}),
         ];
         if let Some(t) = t {
@@ -107,12 +108,12 @@ pub fn seed_demo_menu(conn: &Connection, user_id: i64, tax_id: i64) -> ApiResult
     let none = json!([]);
 
     // 10 burgers
-    let classic = product(c_burgers, n("Classic Burger", "برغر كلاسيك", "Classic Burger"), 4500, Some(3900), grill, sdt(4500, 6000, Some(7500)), beef.clone())?;
-    let cheese = product(c_burgers, n("Cheeseburger", "تشيز برغر", "Cheeseburger"), 5000, Some(4200), grill, sdt(5000, 6500, Some(8000)), beef.clone())?;
-    let bacon = product(c_burgers, n("Bacon Cheese", "بيكون تشيز", "Bacon Cheese"), 6000, None, grill, sdt(6000, 7500, Some(9000)), beef.clone())?;
-    let bbq = product(c_burgers, n("BBQ Smoky", "باربكيو مدخن", "BBQ Smoky"), 6000, None, grill, sdt(6000, 7500, None), beef.clone())?;
-    let spicy = product(c_burgers, n("Spicy Jalapeño", "حار هالبينو", "Spicy Jalapeño"), 5500, None, grill, sdt(5500, 7000, None), beef.clone())?;
-    let mushroom = product(c_burgers, n("Mushroom Swiss", "فطر وجبن سويسري", "Mushroom Swiss"), 5800, None, grill, sdt(5800, 7300, None), beef.clone())?;
+    let classic = product(c_burgers, n("Classic Burger", "برغر كلاسيك", "Classic Burger"), 4500, None, grill, sdt(4500, 6000, Some(7500), Some(3900)), beef.clone())?;
+    let cheese = product(c_burgers, n("Cheeseburger", "تشيز برغر", "Cheeseburger"), 5000, None, grill, sdt(5000, 6500, Some(8000), Some(4200)), beef.clone())?;
+    let bacon = product(c_burgers, n("Bacon Cheese", "بيكون تشيز", "Bacon Cheese"), 6000, None, grill, sdt(6000, 7500, Some(9000), None), beef.clone())?;
+    let bbq = product(c_burgers, n("BBQ Smoky", "باربكيو مدخن", "BBQ Smoky"), 6000, None, grill, sdt(6000, 7500, None, None), beef.clone())?;
+    let spicy = product(c_burgers, n("Spicy Jalapeño", "حار هالبينو", "Spicy Jalapeño"), 5500, None, grill, sdt(5500, 7000, None, None), beef.clone())?;
+    let mushroom = product(c_burgers, n("Mushroom Swiss", "فطر وجبن سويسري", "Mushroom Swiss"), 5800, None, grill, sdt(5800, 7300, None, None), beef.clone())?;
     let kefta = product(c_burgers, n("Kefta Burger", "برغر كفتة", "Kefta Burger"), 5000, None, grill, none.clone(), beef.clone())?;
     let crispy = product(c_burgers, n("Crispy Chicken", "دجاج مقرمش", "Crispy Chicken"), 4500, None, fryer, none.clone(), chicken.clone())?;
     let grilled = product(c_burgers, n("Grilled Chicken", "دجاج مشوي", "Grilled Chicken"), 4500, None, grill, none.clone(), chicken.clone())?;

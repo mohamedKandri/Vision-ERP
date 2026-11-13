@@ -6,7 +6,7 @@
 
 use crate::auth::{self, SessionUser, PERMISSIONS, ROLES};
 use crate::error::{ApiError, ApiResult};
-use crate::{audit, menu, settings};
+use crate::{audit, cash, menu, orders, settings};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
@@ -363,6 +363,256 @@ pub fn dispatch(core: &Core, token: Option<&str>, method: &str, params: Value) -
             Ok(Value::Null)
         }
 
+        // ---------------------------------------------------------- POS
+        "pos.context" => {
+            require(&me, "pos.sell")?;
+            let register = if params.is_null() { main() } else { p::<RegP>(params)?.register };
+            let tables = conn
+                .prepare("SELECT id, name, seats FROM dining_tables WHERE active=1 ORDER BY sort, id")?
+                .query_map([], |r| Ok(json!({"id": r.get::<_, i64>(0)?, "name": r.get::<_, String>(1)?, "seats": r.get::<_, i64>(2)?})))?
+                .collect::<Result<Vec<_>, _>>()?;
+            let taxes = conn
+                .prepare("SELECT id, name, rate_bp, price_include, active FROM taxes")?
+                .query_map([], |r| Ok(json!({"id": r.get::<_, i64>(0)?, "name": r.get::<_, String>(1)?, "rate_bp": r.get::<_, i64>(2)?,
+                                              "price_include": r.get::<_, bool>(3)?, "active": r.get::<_, bool>(4)?})))?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(json!({
+                "menu": menu::get_menu(&conn, false)?,
+                "settings": settings::get_all(&conn)?,
+                "tables": tables,
+                "taxes": taxes,
+                "happy_hour": orders::happy_hour_now(&conn)?,
+                "cash_session": cash::current(&conn, &register)?,
+            }))
+        }
+        "orders.submit" => {
+            require(&me, "pos.sell")?;
+            let id = orders::submit(&conn, &me, p(params)?)?;
+            orders::get(&conn, id)
+        }
+        "orders.get" => {
+            require(&me, "pos.sell")?;
+            orders::get(&conn, p::<IdP>(params)?.id)
+        }
+        "orders.list" => {
+            if !["pos.sell", "kds.use", "reports.view"].iter().any(|x| me.permissions.iter().any(|p| p == x)) {
+                return Err(ApiError::forbidden("pos.sell"));
+            }
+            orders::list(&conn, if params.is_null() { Default::default() } else { p(params)? })
+        }
+        "orders.update_line" => {
+            require(&me, "pos.sell")?;
+            #[derive(Deserialize)]
+            struct P {
+                line_id: i64,
+                qty: Option<i64>,
+                note: Option<String>,
+            }
+            let P { line_id, qty, note } = p(params)?;
+            let id = orders::update_line(&conn, line_id, qty, note)?;
+            orders::get(&conn, id)
+        }
+        "orders.remove_line" => {
+            require(&me, "pos.sell")?;
+            #[derive(Deserialize)]
+            struct P {
+                line_id: i64,
+                reason: Option<String>,
+                approver_pin: Option<String>,
+            }
+            let P { line_id, reason, approver_pin } = p(params)?;
+            let id = orders::remove_line(&conn, &me, line_id, reason, approver_pin.as_deref())?;
+            orders::get(&conn, id)
+        }
+        "orders.discount" => {
+            require(&me, "pos.sell")?;
+            #[derive(Deserialize)]
+            struct P {
+                order_id: Option<i64>,
+                line_id: Option<i64>,
+                discount: Option<orders::DiscountIn>,
+                approver_pin: Option<String>,
+            }
+            let P { order_id, line_id, discount, approver_pin } = p(params)?;
+            let id = match (line_id, order_id) {
+                (Some(l), _) => orders::set_line_discount(&conn, &me, l, discount, approver_pin.as_deref())?,
+                (None, Some(o)) => orders::set_order_discount(&conn, &me, o, discount, approver_pin.as_deref())?,
+                _ => return Err(ApiError::invalid("order_id or line_id required")),
+            };
+            orders::get(&conn, id)
+        }
+        "orders.pay" => {
+            require(&me, "pos.sell")?;
+            #[derive(Deserialize)]
+            struct P {
+                order_id: i64,
+                payments: Vec<orders::PayIn>,
+                #[serde(default = "main")]
+                register: String,
+            }
+            let P { order_id, payments, register } = p(params)?;
+            let r = orders::pay(&conn, &me, order_id, payments, &register)?;
+            Ok(json!({ "result": r, "order": orders::get(&conn, order_id)? }))
+        }
+        "orders.set_status" => {
+            if !["pos.sell", "kds.use"].iter().any(|x| me.permissions.iter().any(|p| p == x)) {
+                return Err(ApiError::forbidden("pos.sell"));
+            }
+            #[derive(Deserialize)]
+            struct P {
+                order_id: i64,
+                status: String,
+            }
+            let P { order_id, status } = p(params)?;
+            orders::set_status(&conn, order_id, &status)?;
+            orders::get(&conn, order_id)
+        }
+        "orders.void" | "orders.refund" | "orders.reopen" => {
+            require(&me, "pos.sell")?;
+            #[derive(Deserialize)]
+            struct P {
+                order_id: i64,
+                #[serde(default)]
+                reason: String,
+                approver_pin: Option<String>,
+                #[serde(default = "main")]
+                register: String,
+            }
+            let P { order_id, reason, approver_pin, register } = p(params)?;
+            match method {
+                "orders.void" => orders::void(&conn, &me, order_id, &reason, approver_pin.as_deref())?,
+                "orders.refund" => {
+                    orders::refund(&conn, &me, order_id, &reason, approver_pin.as_deref(), &register)?;
+                }
+                _ => orders::reopen(&conn, &me, order_id, approver_pin.as_deref())?,
+            }
+            orders::get(&conn, order_id)
+        }
+        "orders.split" => {
+            require(&me, "pos.sell")?;
+            #[derive(Deserialize)]
+            struct P {
+                order_id: i64,
+                moves: Vec<orders::SplitMove>,
+            }
+            let P { order_id, moves } = p(params)?;
+            let new_id = orders::split(&conn, &me, order_id, moves)?;
+            Ok(json!({ "original": orders::get(&conn, order_id)?, "new": orders::get(&conn, new_id)? }))
+        }
+        "orders.receipt_printed" => {
+            require(&me, "pos.sell")?;
+            #[derive(Deserialize)]
+            struct P {
+                order_id: i64,
+                #[serde(default)]
+                reprint: bool,
+            }
+            let P { order_id, reprint } = p(params)?;
+            if reprint {
+                audit::log(&conn, Some(me.id), "receipt.reprint", Some("order"), Some(&order_id.to_string()), None)?;
+            }
+            Ok(Value::Null)
+        }
+
+        // ---------------------------------------------------------- cash
+        "cash.current" => {
+            require(&me, "pos.sell")?;
+            let register = if params.is_null() { main() } else { p::<RegP>(params)?.register };
+            cash::current(&conn, &register)
+        }
+        "cash.open" => {
+            require(&me, "cash.session")?;
+            #[derive(Deserialize)]
+            struct P {
+                #[serde(default = "main")]
+                register: String,
+                float_cents: i64,
+            }
+            let P { register, float_cents } = p(params)?;
+            cash::open(&conn, &me, &register, float_cents)?;
+            cash::current(&conn, &register)
+        }
+        "cash.move" => {
+            require(&me, "cash.in_out")?;
+            #[derive(Deserialize)]
+            struct P {
+                #[serde(default = "main")]
+                register: String,
+                kind: String,
+                amount_cents: i64,
+                reason: String,
+            }
+            let P { register, kind, amount_cents, reason } = p(params)?;
+            cash::movement(&conn, &me, &register, &kind, amount_cents, &reason)?;
+            cash::current(&conn, &register)
+        }
+        "cash.close" => {
+            require(&me, "cash.session")?;
+            #[derive(Deserialize)]
+            struct P {
+                #[serde(default = "main")]
+                register: String,
+                counted_cents: i64,
+                #[serde(default)]
+                note: String,
+            }
+            let P { register, counted_cents, note } = p(params)?;
+            cash::close(&conn, &me, &register, counted_cents, &note)
+        }
+        "cash.sessions" => {
+            require(&me, "cash.session")?;
+            cash::sessions(&conn, 100)
+        }
+        "cash.report" => {
+            if !["cash.session", "reports.view"].iter().any(|x| me.permissions.iter().any(|p| p == x)) {
+                return Err(ApiError::forbidden("cash.session"));
+            }
+            cash::report(&conn, p::<IdP>(params)?.id)
+        }
+        "drawer.open" => {
+            require(&me, "drawer.open")?;
+            let reason = params.get("reason").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            audit::log(&conn, Some(me.id), "drawer.open", None, None, Some(json!({ "reason": reason })))?;
+            // The physical kick is sent by the printer layer (Phase 4).
+            Ok(Value::Null)
+        }
+
+        // ---------------------------------------------------------- tables
+        "tables.list" => {
+            let rows = conn
+                .prepare("SELECT id, name, seats, sort, active FROM dining_tables ORDER BY sort, id")?
+                .query_map([], |r| Ok(json!({"id": r.get::<_, i64>(0)?, "name": r.get::<_, String>(1)?, "seats": r.get::<_, i64>(2)?,
+                                              "sort": r.get::<_, i64>(3)?, "active": r.get::<_, bool>(4)?})))?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(json!(rows))
+        }
+        "tables.save" => {
+            require(&me, "settings.manage")?;
+            #[derive(Deserialize)]
+            struct P {
+                id: Option<i64>,
+                name: String,
+                seats: i64,
+                #[serde(default)]
+                sort: i64,
+                active: bool,
+            }
+            let t: P = p(params)?;
+            if t.name.trim().is_empty() || t.name.chars().count() > 30 || !(1..=50).contains(&t.seats) {
+                return Err(ApiError::invalid("table name and 1-50 seats required"));
+            }
+            match t.id {
+                Some(id) => {
+                    conn.execute("UPDATE dining_tables SET name=?2, seats=?3, sort=?4, active=?5 WHERE id=?1", params![id, t.name.trim(), t.seats, t.sort, t.active])?;
+                }
+                None => {
+                    conn.execute("INSERT INTO dining_tables (name, seats, sort, active) VALUES (?1,?2,?3,?4)", params![t.name.trim(), t.seats, t.sort, t.active])?;
+                }
+            }
+            audit::log(&conn, Some(me.id), "table.saved", Some("table"), None, Some(json!({"name": t.name.trim(), "active": t.active})))?;
+            Ok(Value::Null)
+        }
+
         "audit.list" => {
             require(&me, "audit.view")?;
             #[derive(Deserialize)]
@@ -376,6 +626,21 @@ pub fn dispatch(core: &Core, token: Option<&str>, method: &str, params: Value) -
 
         _ => Err(ApiError::new("unknown_method", method.to_string())),
     }
+}
+
+fn main() -> String {
+    "main".into()
+}
+
+#[derive(Deserialize)]
+struct IdP {
+    id: i64,
+}
+
+#[derive(Deserialize)]
+struct RegP {
+    #[serde(default = "main")]
+    register: String,
 }
 
 #[derive(Deserialize)]

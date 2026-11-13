@@ -173,3 +173,112 @@ Each phase records what was **verified** (by a test or by running the app) and w
   size; Phase 5 sync will need to send them efficiently.
 - Recipes per product and modifier (stock) come in Phase 6. Price variants have no recipe link yet.
 - Reorder arrows only show when a single category is selected, which is intentional.
+
+## Phase 3: POS ordering, payments, cash sessions, receipt preview (2026-11-13)
+
+### Built
+- Migration `0003_orders`: dining tables (10 seeded), cash sessions (one open per register,
+  enforced by a unique index), cash movements, orders, order lines, payments. Z numbers come
+  from a sequence.
+- **The Host computes all money**, so stored totals never depend on what a till sends.
+  - `pricing.rs` is a Rust port of `money.ts`. `test-vectors/pricing.json` holds 306 cases
+    (hand-written plus seeded random ones) and is checked by **both** Vitest and cargo test,
+    proving identical totals to the centime.
+  - `allocate` was rewritten with integer remainders in both languages to remove any
+    float edge case.
+  - `item.rs` is a Rust port of the menu rules in `menu.ts` (validate, unit price, ticket text
+    in FR/AR/EN). The Host re-prices every line from the stored menu and the happy-hour clock.
+- Orders (`orders.rs`):
+  - Order types: dine-in with a table, takeaway with a name, delivery with phone, address
+    and fee. The delivery fee is taxed at the default tax.
+  - Order numbers never reset. A failed order rolls back without using up a number.
+  - Lines snapshot names and ticket text, so menu edits never change past receipts.
+  - Unsent lines can be edited or deleted. Lines already sent to the kitchen can only be
+    voided, with a reason and the `pos.void` permission or a manager PIN.
+  - Line and order discounts (% or fixed) and comps (with a reason). Approval follows
+    `discount_pin_threshold_bp` (0 = always) using the `pos.discount` permission or a
+    manager PIN typed at the till. The Host checks the PIN; a till can't fake an approval.
+  - Payments by cash (amount received, change stored), card, or both. A card amount can't
+    be more than what's due. Payments need an open till on that register.
+  - Status flow: open → sent → preparing → ready → served; paid + served → closed.
+  - Hold/park with a label; split by items onto a new bill numbered #N-2 (unpaid orders only).
+  - Void (unpaid only), full refund (each payment method mirrored), reopen (manager).
+    All are audited, and the receipt reprint is audited too.
+- Cash (`cash.rs`):
+  - Open the till with a float; cash in/out with a reason.
+  - **X report** at any time: cash/card sales, refunds, expected cash, orders, average
+    ticket, discounts, comps, voids, totals by order type, VAT by rate, movements.
+  - **Close (Z)**: counted cash and the difference, a Z number, and a JSON snapshot frozen
+    at close. Unpaid open orders produce a warning.
+- `src/lib/receipt.ts`: receipt layout as printer-agnostic lines (logo, shop, ICE/IF/RC/Patente,
+  order number, type/table/customer, items with details/notes/discounts/comps, subtotal, order
+  discount, delivery fee, TOTAL TTC, VAT by rate, payments, change, balance due, footer, QR,
+  DUPLICATA/REFUNDED/VOIDED marks) for 58 mm and 80 mm. Phase 4 prints this same list.
+- UI:
+  - **Till**: category tabs, a product grid (86'd items greyed out), the item popup, and the
+    cart with quantity and notes. Totals estimate live with the same maths as the Host.
+  - Order type, table picker and customer fields; send to kitchen; hold; discount; split;
+    void/refund/reopen.
+  - Manager-PIN prompt that retries the action; payment popup with a keypad, quick-cash
+    buttons, card+cash split and a big change display; receipt preview; orders list.
+  - Orders list with ready/served actions and a ready badge with a beep (polled every 10 s;
+    the KDS drives it in Phase 5).
+  - **Caisse du jour**: X report, cash in/out, Z close with a live difference, Z history.
+
+### Verified
+- **Rust: 56 tests pass**:
+  - pricing: the 306 shared vectors, plus rounding basics;
+  - items: Classic Double + 2 cheese = 70,00; Menu Classic Maxi + Potatoes = 78,00; combo
+    slot and doneness rules; 86; happy-hour price;
+  - orders:
+    - numbering, Host-side totals and VAT, and a rejected order rolling back without using
+      a number;
+    - delivery rules and fee;
+    - cashier discounts need a manager PIN (own PIN refused, override audited), the threshold
+      setting, and comps needing a reason;
+    - card + cash with change, overpay refused, and the paid + served → closed flow;
+    - payment needs an open till;
+    - sent lines need a void approval, unsent lines are deleted;
+    - void/refund/reopen with audit, split numbering and totals, hold/resume;
+  - cash: a full shift (sales, void, cash in/out, refund, X, Z with −5,00 difference, frozen
+    Z, second session as Z n°2).
+- **Vitest: 80 tests pass**: Phase 2 tests, the shared vectors, and 10 receipt tests (widths
+  32/48, legal ids, items/details/notes, voided lines hidden, subtotal/discount/total/VAT/
+  change, DUPLICATA/REFUNDED/balance due, AR/EN labels and names, delivery block and comps).
+- `tsc` is clean.
+- **End-to-end on the real app** (dev build, Playwright over the WebView2 DevTools port). It ran
+  on the owner's own "test" database, with their permission. Checks were relative where
+  existing data could affect them. Every check passes:
+  - the till-closed banner, and opening the till with 500,00;
+  - takeaway Coca + Classic Double + cheese + Frites Grande = **97,00**; paying with 100,00
+    shows change **3,00**;
+  - the receipt shows #1, 97,00, "TVA 10 % HT 88,18 / 8,82" and change 3,00;
+  - the next order is #2;
+  - dine-in at T3: Menu Classic + Tiramisu = 90,00, sent to the kitchen;
+  - a 10 % item discount asks for a manager PIN; the cashier's PIN is refused and the
+    manager's accepted, giving **83,50**;
+  - splitting the Tiramisu onto #2-2 leaves **58,50**;
+  - paid by card, then marked ready and served, the order leaves the active list (closed);
+  - the #2-2 check is voided with a manager PIN;
+  - the X report shows cash 97,00, card 58,50, expected **577,00** after a 20,00 cash-out,
+    1 void, discounts 6,50, average ticket 77,75, and VAT 141,36 + 14,14;
+  - reopening a paid receipt shows DUPLICATA;
+  - closing the till with 577,00 counted gives Z with a difference of **0,00**;
+  - no console errors.
+- **Issue found by the E2E run and fixed:** the receipt VAT line used the tax's own name
+  ("TVA 10% TTC HT 88,18"). It now shows "TVA 10 % HT 88,18 … 8,82".
+- **Demo data bug found by tests and fixed:** the happy-hour price of Classic and Cheese was
+  set on the product, but products with sizes take their price from the size, so it never
+  applied. It's now on the Single size, and the editor explains that with sizes, happy hour
+  is set per size.
+
+### Not verified / known issues
+- No printing yet (Phase 4). The receipt preview is the exact layout that will print.
+  "Open drawer" only writes the audit entry for now.
+- Refunds are full refunds only; there are no partial refunds.
+- Split is by item and quantity, before any payment. Splitting an amount equally isn't
+  done (card + cash split payment covers most cases).
+- The ready badge polls every 10 s. Live push comes with the LAN WebSocket in Phase 5.
+- The register name is per device (`localStorage`, default "main"). The device settings
+  screen for choosing it comes with Host/Client in Phase 5.
+- The Android APK has not been rebuilt for Phase 3, and nothing has run on a tablet yet.

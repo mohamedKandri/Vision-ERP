@@ -1,9 +1,11 @@
-import { Ban, ChefHat, History, Lock, LogOut, Percent, Settings as Cog, ShieldCheck, ShoppingCart, User, Users, UtensilsCrossed } from "lucide-react";
+import { Ban, Banknote, ChefHat, History, Lock, LogOut, Percent, Settings as Cog, ShieldCheck, ShoppingCart, User, Users, UtensilsCrossed } from "lucide-react";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { applyLang, errorText, LangContext, translate, useT, type Key } from "./i18n";
 import { rpc, setToken, type Lang, type SessionUser, type Settings } from "./lib/rpc";
 import { AuditScreen, MeScreen, PermissionsScreen, TaxesScreen, UsersScreen } from "./screens/AdminScreens";
+import { CashScreen } from "./screens/CashScreen";
 import { Login } from "./screens/Login";
+import { PosScreen } from "./screens/PosScreen";
 import { AvailabilityScreen, MenuScreen } from "./screens/MenuScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { Setup } from "./screens/Setup";
@@ -15,10 +17,11 @@ interface Status {
   version: string;
 }
 
-type Page = "pos" | "kitchen" | "menu" | "86" | "settings" | "taxes" | "users" | "permissions" | "audit" | "me";
+type Page = "pos" | "cash" | "kitchen" | "menu" | "86" | "settings" | "taxes" | "users" | "permissions" | "audit" | "me";
 
 const NAV: { page: Page; label: Key; icon: ReactNode; perm?: string | string[]; phase?: number }[] = [
-  { page: "pos", label: "nav_pos", icon: <ShoppingCart />, perm: "pos.sell", phase: 3 },
+  { page: "pos", label: "nav_pos", icon: <ShoppingCart />, perm: "pos.sell" },
+  { page: "cash", label: "nav_cash", icon: <Banknote />, perm: ["cash.session", "cash.in_out"] },
   { page: "kitchen", label: "nav_kitchen", icon: <ChefHat />, perm: "kds.use", phase: 5 },
   { page: "86", label: "nav_86", icon: <Ban />, perm: ["menu.manage", "pos.sell", "kds.use"] },
   { page: "menu", label: "nav_menu", icon: <UtensilsCrossed />, perm: "menu.manage" },
@@ -110,6 +113,12 @@ function Shell({
     );
   } else {
     switch (page) {
+      case "pos":
+        body = <PosScreen me={user} />;
+        break;
+      case "cash":
+        body = <CashScreen me={user} />;
+        break;
       case "menu":
         body = <MenuScreen />;
         break;

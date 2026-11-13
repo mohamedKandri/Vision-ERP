@@ -3,10 +3,10 @@
 A local-first POS + back office for one burger shop. It runs 100 % offline on Android
 POS terminals/tablets and on a Windows PC. There's no cloud, no account and no telemetry.
 
-> **Status: Phase 2 of 9.** You get setup, PIN login, staff and roles, permissions,
+> **Status: Phase 3 of 9.** You get setup, PIN login, staff and roles, permissions,
 > settings, taxes, the audit log, and the full menu (products, sizes, modifiers, combos,
-> out-of-stock board, happy hour). The till, kitchen screen, printers and LAN sync
-> come in later phases (see [DEVLOG.md](DEVLOG.md)).
+> out-of-stock board, happy hour), the till with payments, and cash sessions (X/Z).
+> Printers, the kitchen screen and LAN sync come in later phases (see [DEVLOG.md](DEVLOG.md)).
 
 ## Install
 
@@ -54,6 +54,25 @@ The till won't sell it until it's back.
 
 Happy hour: set a happy-hour price on a product or variant, then switch it on and set the
 hours in **Settings → Happy hour**.
+
+## Till (Caisse)
+
+1. **Open the till** with its float (cashier or manager). The till takes no payment while closed.
+2. Choose **Sur place** (pick a table), **À emporter** (customer name) or **Livraison**
+   (phone + address; the delivery fee comes from Settings).
+3. Tap products. Items with sizes, options or combo steps open a popup. Tap a cart line to
+   add a note ("allergie sésame").
+4. Use the chef-hat button to send to the kitchen, or **Encaisser** to send and take payment
+   (cash with change, card, or both).
+- **Discounts and comps:** every discount needs a manager PIN by default. Set the threshold in
+  Settings → Sales. A comp always needs a reason.
+- **Removing an item** already sent to the kitchen, **voiding**, **refunding** and **reopening**
+  an order all need a manager (or their PIN) and are written to the audit log.
+- **En attente** parks an order under a label; reopen it from the orders list.
+- **Diviser l'addition** moves items onto a new bill (#42-2), before any payment.
+
+**Caisse du jour** shows the live X report. **Clôturer (Z)** asks for the counted cash, shows
+the difference, and freezes a numbered Z report.
 
 ## Taxes (Odoo-style)
 

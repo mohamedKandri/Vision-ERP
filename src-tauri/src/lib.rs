@@ -1,9 +1,13 @@
 pub mod api;
 pub mod audit;
 pub mod auth;
+pub mod cash;
 pub mod db;
 pub mod error;
+pub mod item;
 pub mod menu;
+pub mod orders;
+pub mod pricing;
 pub mod seed;
 pub mod settings;
 
