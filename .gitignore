@@ -1,0 +1,12 @@
+node_modules
+dist
+src-tauri/target
+src-tauri/gen/schemas
+*.log
+.DS_Store
+# signing material never goes in git
+*.jks
+*.keystore
+keystore.properties
+src-tauri/gen/android/keystore.properties
+release/
