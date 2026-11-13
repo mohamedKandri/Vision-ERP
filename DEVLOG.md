@@ -282,3 +282,97 @@ Each phase records what was **verified** (by a test or by running the app) and w
 - The register name is per device (`localStorage`, default "main"). The device settings
   screen for choosing it comes with Host/Client in Phase 5.
 - The Android APK has not been rebuilt for Phase 3, and nothing has run on a tablet yet.
+
+## Phase 4: printing (2026-11-13)
+
+### Built
+- Migration `0004_printing`:
+  - `printers`: type, address, paper 58/80, code page, graphic mode, cut, drawer, receipt
+    register, ticket language;
+  - station routing (`printer_id`, `show_on_screen`);
+  - a durable `print_jobs` queue.
+- `escpos.rs` (ESC/POS encoder):
+  - Code pages CP437/850/858/1252/ASCII, with accent fallback and normalised spaces/dashes.
+    French money formatting uses narrow no-break spaces, which print as plain spaces.
+  - Bold, big text and alignment; wrap/row use the same algorithm as the on-screen preview.
+  - Native QR (`GS ( k`); PNG logos and full-page images converted to `GS v 0` raster in
+    256-row bands (logos dithered, text images thresholded); partial cut.
+  - Drawer kick: generic `ESC p` or **SUNMI `DLE DC4 0 0 0`** (the command SUNMI documents).
+- Transports:
+  - **Network** TCP 9100 (3 s connect timeout).
+  - **USB on Windows** through the spooler in RAW mode (`windows-sys` winspool), with
+    printer discovery.
+  - **Bluetooth on Android** through a Kotlin Tauri plugin (`PrinterPlugin.kt`): RFCOMM SPP,
+    with a channel-1 fallback for low-cost printers and the `BLUETOOTH_CONNECT` permission.
+  - **SUNMI built-in printer** through the same Bluetooth path, to the paired virtual
+    printer "InnerPrinter" (docs.sunmi.com, printer development).
+- Kitchen tickets (`printing.rs`):
+  - Queued **in the same transaction** that sends the lines, so a ticket can't be lost.
+  - One ticket per station that has a printer. **Combos are split into their parts**:
+    burger → Grill, fries → Fryer, drink → Drinks, each tagged with the combo and its size.
+  - Ticket layout: big order number, NEW / ADDED / CANCELLED / REPRINT header, type,
+    table or name, time, items with details and notes ("!!"), and the order note.
+  - **Changed orders print only the changes**: items added later print an "ADDED"
+    ticket, and voiding an item already sent prints a "CANCELLED" ticket.
+  - French or English per printer.
+- Queue worker: a background thread that sends one printer at a time, in order, with
+  printers handled in parallel. Failed jobs retry with backoff (2…30 s) and wake up as
+  soon as a new job is queued.
+  - Jobs leave the queue only when printed, or when a manager deletes them with a PIN.
+  - A manager can **reroute** a dead printer's jobs to another printer.
+  - The till shows a red banner with retry when any job has failed.
+- Receipts and reports:
+  - The till prints the same receipt layout it previews, automatically after payment
+    (setting).
+  - Paying cash kicks the drawer (setting), queued as its own job before the receipt.
+  - X/Z reports print as well (`reportDoc`, tested).
+  - **Arabic receipts and "graphic mode" printers** are rendered on a canvas by the till,
+    which shapes Arabic and lays it out right-to-left, then printed as an image.
+- `rpc` now runs off the UI thread (async + `spawn_blocking`), so PIN hashing or a slow
+  Bluetooth printer can't freeze the screen.
+- UI: **Imprimantes** screen (add/edit, discover USB/Bluetooth, test print with result,
+  station routing, queue with retry/delete/reroute); the till's print/reprint, kitchen
+  reprint and drawer buttons; X/Z print; three new switches in Settings → Sales.
+
+### Verified
+- **Rust: 80 tests pass**, including:
+  - **Encoder:** code page bytes (é→0x82 in CP850, €→0xD5/0x80), tables of 128 entries,
+    wrap/row matching the preview, styles/rule/cut bytes, big text wrapping at half width,
+    generic and SUNMI drawer bytes, native QR, PNG→raster (exact bits; scaling and
+    banding; RGBA with transparency), bad images skipped without stopping the print.
+  - **Printing logic:** address validation; one receipt printer per register; combo split
+    across stations; ADDED/CANCELLED/REPRINT tickets showing only changes; no printers or
+    setting off → no jobs; retry order and backoff (the second ticket waits behind the
+    first); reroute; the drawer job needs a drawer.
+  - **Transports:** exact bytes over a **real TCP socket**; a refused connection is
+    reported; **Windows printer list works on this PC**.
+  - **Full pipeline test through the API** with the real worker and two fake network
+    printers:
+    - the cashier can't manage printers;
+    - the Grill gets "2 x Kefta Burger … NOUVELLE … !! bien cuit" (no Coca), cut;
+    - paying in cash sends the drawer kick, then the receipt;
+    - with the grill printer unreachable, the ADDED ticket fails and shows as a problem;
+    - after a retry it prints, and nothing was lost;
+    - drawer button and kitchen reprint (`RÉIMPRESSION` in CP850) work.
+- **Vitest: 83 tests pass** (adds the X/Z report layout: values, VAT, movements, fits 58 mm).
+- `tsc` is clean and `cargo build` (desktop) succeeds.
+- **Arabic receipt image checked in a real browser** (canvas): shaped Arabic, right-to-left
+  layout and QR. Two flaws were found and fixed: the currency mark printed as ".د.م" (amounts
+  are now drawn right-to-left) and an amount was split from its currency across two lines
+  (they're now kept together).
+
+### Not verified / known issues
+- **No real printer, Bluetooth device or SUNMI terminal has been tested yet.** Network
+  printing is proven against TCP sockets only. Bluetooth and SUNMI code paths have only
+  been compiled (see Android build below).
+- The owner chose not to run the UI end-to-end on their database this phase. The printing
+  screens were type-checked and run in the dev app, but not driven by a script.
+- Kitchen tickets print in French or English. Arabic kitchen tickets would need the Host
+  to render images; not done.
+- Some printers only use the generic `ESC p` drawer command on pin 5; there's no setting
+  for that yet.
+- USB printing needs the printer installed in Windows (any driver; data is sent RAW).
+- **Android build:** the APK builds with the Kotlin Bluetooth plugin (Gradle BUILD SUCCESSFUL),
+  is signed with the debug key (`apksigner verify` passes), and its manifest contains the
+  BLUETOOTH, BLUETOOTH_ADMIN and BLUETOOTH_CONNECT permissions. Output:
+  `release/burger-os-0.1.0-arm64-test.apk` (7.6 MB). It has not been run on a tablet yet.

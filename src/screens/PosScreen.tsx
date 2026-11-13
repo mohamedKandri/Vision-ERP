@@ -10,6 +10,8 @@ import { orderLabel, type Order, type OrderLine, type OrderType } from "../lib/o
 import { buildReceipt } from "../lib/receipt";
 import { isApiError, rpc, type Lang, type SessionUser, type Settings, type TaxRow } from "../lib/rpc";
 import { CATEGORY_ICONS } from "./MenuScreen";
+import { PrintProblems } from "./PrintersScreen";
+import { printReceipt, type ReceiptPrinter } from "../lib/print";
 
 interface Ctx {
   menu: Menu;
@@ -18,6 +20,7 @@ interface Ctx {
   taxes: TaxRow[];
   happy_hour: boolean;
   cash_session: { session_id: number } | null;
+  receipt_printer: ReceiptPrinter | null;
 }
 
 interface CartLine {
@@ -264,6 +267,7 @@ export function PosScreen({ me }: { me: SessionUser }) {
     <div className="flex h-full min-h-0 flex-col lg:flex-row">
       {/* ---------------- menu side */}
       <section className="flex min-h-0 flex-1 flex-col">
+        <PrintProblems />
         {!ctx.cash_session && (
           <div className="flex items-center justify-between gap-3 bg-amber-500/20 px-4 py-2 text-amber-600 dark:text-amber-300">
             <span className="font-medium">{t("pos_till_closed")}</span>
@@ -536,6 +540,12 @@ export function PosScreen({ me }: { me: SessionUser }) {
             const r = await rpc<{ result: { change_cents: number }; order: Order }>("orders.pay", { order_id: order.id, payments, register });
             setOrder(r.order);
             setDialog({ kind: "paid", change: r.result.change_cents });
+            const paidCash = payments.some((x) => x.method === "cash");
+            if (ctx.receipt_printer && s.auto_print_receipt !== false) {
+              printReceipt(r.order, s, ctx.receipt_printer, { lang: receiptLang, register, kick: paidCash && s.drawer_on_cash !== false }).catch(fail);
+            } else if (paidCash && s.drawer_on_cash !== false && ctx.receipt_printer?.drawer) {
+              rpc("drawer.open", { reason: "cash payment", register }).catch(fail);
+            }
           }} />
       )}
 
@@ -552,7 +562,8 @@ export function PosScreen({ me }: { me: SessionUser }) {
                 </div>
               )}
               <Button variant="primary" className="w-full text-lg" onClick={newOrder}>{t("pos_new_order")}</Button>
-              {me.permissions.includes("drawer.open") && <Button className="w-full" onClick={() => rpc("drawer.open", { reason: "sale" }).catch(fail)}>{t("pos_open_drawer")}</Button>}
+              {me.permissions.includes("drawer.open") && ctx.receipt_printer?.drawer && <Button className="w-full" onClick={() => rpc("drawer.open", { reason: "manual", register }).catch(fail)}>{t("pos_open_drawer")}</Button>}
+              {ctx.receipt_printer && <Button className="w-full" onClick={() => printReceipt(order, s, ctx.receipt_printer!, { lang: receiptLang, register, reprint: true }).then(() => toast.ok(t("pr_sent")), fail)}>{t("pos_reprint")}</Button>}
             </div>
             <div className="max-h-[70vh] overflow-auto">
               <ReceiptView width={getPaper()} lines={buildReceipt(order, s, { lang: receiptLang, width: getPaper() })} />
@@ -564,9 +575,18 @@ export function PosScreen({ me }: { me: SessionUser }) {
       {dialog?.kind === "receipt" && order && (
         <Modal onClose={() => setDialog(null)}>
           <ReceiptView width={getPaper()} lines={buildReceipt(order, s, { lang: receiptLang, width: getPaper(), reprint: dialog.reprint })} />
-          <p className="muted mt-3 text-center text-xs">{t("pos_print_later")}</p>
-          <div className="mt-3 flex justify-end gap-2">
-            <Button onClick={() => { rpc("orders.receipt_printed", { order_id: order.id, reprint: dialog.reprint }).catch(fail); setDialog(null); }}>{dialog.reprint ? t("pos_reprint") : t("close")}</Button>
+          {!ctx.receipt_printer && <p className="muted mt-3 text-center text-xs">{t("pr_no_receipt_printer")}</p>}
+          <div className="mt-3 flex flex-wrap justify-end gap-2">
+            {order.lines.some((l) => l.kitchen_status !== "new" && !l.voided) && (
+              <Button onClick={() => rpc("print.kitchen_reprint", { id: order.id }).then(() => toast.ok(t("pr_sent")), fail)}>{t("pr_print_kitchen")}</Button>
+            )}
+            {ctx.receipt_printer ? (
+              <Button variant="primary" onClick={() => printReceipt(order, s, ctx.receipt_printer!, { lang: receiptLang, register, reprint: dialog.reprint }).then(() => { toast.ok(t("pr_sent")); setDialog(null); }, fail)}>
+                {dialog.reprint ? t("pos_reprint") : t("pr_print")}
+              </Button>
+            ) : (
+              <Button onClick={() => { rpc("orders.receipt_printed", { order_id: order.id, reprint: dialog.reprint }).catch(fail); setDialog(null); }}>{t("close")}</Button>
+            )}
           </div>
         </Modal>
       )}

@@ -6,25 +6,25 @@
 
 use crate::auth::{self, SessionUser, PERMISSIONS, ROLES};
 use crate::error::{ApiError, ApiResult};
-use crate::{audit, cash, menu, orders, settings};
+use crate::{audit, cash, menu, orders, printing, settings};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// Sessions idle longer than this must log in again (UI auto-lock is usually shorter).
 const SESSION_IDLE: Duration = Duration::from_secs(12 * 60 * 60);
 
 pub struct Core {
-    pub conn: Mutex<Connection>,
+    pub conn: Arc<Mutex<Connection>>,
     sessions: Mutex<HashMap<String, (i64, Instant)>>,
 }
 
 impl Core {
     pub fn new(conn: Connection) -> Self {
-        Self { conn: Mutex::new(conn), sessions: Mutex::new(HashMap::new()) }
+        Self { conn: Arc::new(Mutex::new(conn)), sessions: Mutex::new(HashMap::new()) }
     }
 
     fn session_user_id(&self, token: Option<&str>) -> ApiResult<i64> {
@@ -383,6 +383,9 @@ pub fn dispatch(core: &Core, token: Option<&str>, method: &str, params: Value) -
                 "taxes": taxes,
                 "happy_hour": orders::happy_hour_now(&conn)?,
                 "cash_session": cash::current(&conn, &register)?,
+                "receipt_printer": printing::receipt_printer(&conn, &register)?.map(|p| json!({
+                    "id": p.id, "name": p.name, "paper_mm": p.paper_mm, "graphic_mode": p.graphic_mode, "drawer": p.drawer, "kind": p.kind,
+                })),
             }))
         }
         "orders.submit" => {
@@ -572,9 +575,122 @@ pub fn dispatch(core: &Core, token: Option<&str>, method: &str, params: Value) -
         "drawer.open" => {
             require(&me, "drawer.open")?;
             let reason = params.get("reason").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            audit::log(&conn, Some(me.id), "drawer.open", None, None, Some(json!({ "reason": reason })))?;
-            // The physical kick is sent by the printer layer (Phase 4).
+            let register = params.get("register").and_then(|v| v.as_str()).unwrap_or("main").to_string();
+            let p = printing::receipt_printer(&conn, &register)?.filter(|p| p.drawer).ok_or_else(|| ApiError::new("no_printer", "no printer with a cash drawer on this register"))?;
+            printing::enqueue(&conn, p.id, "drawer", None, None, "drawer", &[], Some(me.id))?;
+            audit::log(&conn, Some(me.id), "drawer.open", None, None, Some(json!({ "reason": reason, "register": register })))?;
             Ok(Value::Null)
+        }
+
+        // ---------------------------------------------------------- printing
+        "printers.list" => {
+            require(&me, "settings.manage")?;
+            printing::list(&conn)
+        }
+        "printers.save" => {
+            require(&me, "settings.manage")?;
+            Ok(json!({ "id": printing::save_printer(&conn, &me, p(params)?)? }))
+        }
+        "printers.test" => {
+            require(&me, "settings.manage")?;
+            let printer = printing::load_printer(&conn, p::<IdP>(params)?.id)?;
+            let shop = settings::get(&conn, "shop_name")?.as_str().unwrap_or("BURGER OS").to_string();
+            let job = printing::enqueue(&conn, printer.id, "test", None, None, "test", &printing::test_doc(&printer, &shop), Some(me.id))?;
+            Ok(json!({ "job_id": job }))
+        }
+        "printers.discover" => {
+            require(&me, "settings.manage")?;
+            let usb = printing::system_printers();
+            let bt = printing::paired_bluetooth();
+            Ok(json!({
+                "usb": usb.as_ref().ok(), "usb_error": usb.as_ref().err(),
+                "bluetooth": bt.as_ref().ok(), "bluetooth_error": bt.as_ref().err(),
+            }))
+        }
+        "stations.routing" => {
+            require(&me, "settings.manage")?;
+            #[derive(Deserialize)]
+            struct P {
+                station_id: i64,
+                printer_id: Option<i64>,
+                show_on_screen: bool,
+            }
+            let P { station_id, printer_id, show_on_screen } = p(params)?;
+            printing::set_station_routing(&conn, &me, station_id, printer_id, show_on_screen)?;
+            printing::list(&conn)
+        }
+        "print.problems" => printing::problems(&conn),
+        "print.jobs" => {
+            require(&me, "pos.sell")?;
+            let scope = params.get("scope").and_then(|v| v.as_str()).unwrap_or("open").to_string();
+            printing::jobs(&conn, &scope)
+        }
+        "print.job" => printing::job_status(&conn, p::<IdP>(params)?.id),
+        "print.retry" => {
+            #[derive(Deserialize)]
+            struct P {
+                job_id: Option<i64>,
+                printer_id: Option<i64>,
+            }
+            let P { job_id, printer_id } = p(params)?;
+            Ok(json!({ "jobs": printing::retry(&conn, job_id, printer_id)? }))
+        }
+        "print.cancel" | "print.reroute" => {
+            #[derive(Deserialize)]
+            struct P {
+                job_id: Option<i64>,
+                from: Option<i64>,
+                to: Option<i64>,
+                approver_pin: Option<String>,
+            }
+            let P { job_id, from, to, approver_pin } = p(params)?;
+            let id = job_id.or(from).unwrap_or(0);
+            let by = orders::approve(&conn, &me, "pos.void", approver_pin.as_deref(), method, id)?;
+            if method == "print.cancel" {
+                printing::cancel(&conn, &me, job_id.ok_or_else(|| ApiError::invalid("job_id required"))?, by)?;
+                Ok(Value::Null)
+            } else {
+                let n = printing::reroute(&conn, &me, from.ok_or_else(|| ApiError::invalid("from required"))?, to.ok_or_else(|| ApiError::invalid("to required"))?)?;
+                Ok(json!({ "jobs": n }))
+            }
+        }
+        "print.receipt" | "print.doc" => {
+            if !["pos.sell", "cash.session", "reports.view"].iter().any(|x| me.permissions.iter().any(|p| p == x)) {
+                return Err(ApiError::forbidden("pos.sell"));
+            }
+            #[derive(Deserialize)]
+            struct P {
+                #[serde(default = "main")]
+                register: String,
+                doc: Vec<crate::escpos::Line>,
+                order_id: Option<i64>,
+                #[serde(default)]
+                reprint: bool,
+                #[serde(default)]
+                kick: bool,
+                #[serde(default)]
+                title: String,
+            }
+            let a: P = p(params)?;
+            if a.doc.len() > 2000 {
+                return Err(ApiError::invalid("document too long"));
+            }
+            let printer = printing::receipt_printer(&conn, &a.register)?.ok_or_else(|| ApiError::new("no_printer", "no receipt printer on this register"))?;
+            if a.kick && printer.drawer && me.permissions.iter().any(|x| x == "drawer.open") {
+                printing::enqueue(&conn, printer.id, "drawer", a.order_id, None, "drawer", &[], Some(me.id))?;
+                audit::log(&conn, Some(me.id), "drawer.open", Some("order"), a.order_id.map(|x| x.to_string()).as_deref(), Some(json!({"reason": "cash payment"})))?;
+            }
+            let kind = if method == "print.receipt" { "receipt" } else { "report" };
+            let job = printing::enqueue(&conn, printer.id, kind, a.order_id, None, &a.title, &a.doc, Some(me.id))?;
+            if a.reprint {
+                audit::log(&conn, Some(me.id), "receipt.reprint", Some("order"), a.order_id.map(|x| x.to_string()).as_deref(), None)?;
+            }
+            Ok(json!({ "job_id": job, "printer": printer.name, "graphic_mode": printer.graphic_mode, "paper_mm": printer.paper_mm }))
+        }
+        "print.kitchen_reprint" => {
+            require(&me, "pos.sell")?;
+            let n = printing::reprint_kitchen(&conn, &me, p::<IdP>(params)?.id)?;
+            Ok(json!({ "tickets": n }))
         }
 
         // ---------------------------------------------------------- tables

@@ -4,6 +4,8 @@ import { errorText, useT, type Key } from "../i18n";
 import { formatMoney, formatRate } from "../lib/money";
 import { rpc, type SessionUser } from "../lib/rpc";
 import { getRegister } from "./PosScreen";
+import { printReport, type ReceiptPrinter } from "../lib/print";
+import type { Settings, Lang } from "../lib/rpc";
 
 export interface CashReport {
   session_id: number;
@@ -109,6 +111,13 @@ export function CashScreen({ me }: { me: SessionUser }) {
   const [amount, setAmount] = useState<number | null>(null);
   const [reason, setReason] = useState("");
   const canSession = me.permissions.includes("cash.session");
+  const [printer, setPrinter] = useState<{ p: ReceiptPrinter; s: Settings } | null>(null);
+  useEffect(() => {
+    if (!me.permissions.includes("pos.sell")) return;
+    rpc<{ receipt_printer: ReceiptPrinter | null; settings: Settings }>("pos.context", { register }).then((c) => c.receipt_printer && setPrinter({ p: c.receipt_printer, s: c.settings }), () => {});
+  }, [me, register]);
+  const print = (r: CashReport) =>
+    printer && printReport(r, printer.s, printer.p, (printer.s.default_language as Lang) ?? "fr", register).then(() => toast.ok(t("pr_sent")), (e) => toast.error(errorText(t.lang, e)));
 
   const load = useCallback(async () => {
     try {
@@ -150,6 +159,7 @@ export function CashScreen({ me }: { me: SessionUser }) {
                 <Button onClick={() => setDialog("out")}>{t("cash_out")}</Button>
               </>
             )}
+            {cur && printer && <Button onClick={() => print(cur)}>{t("pr_print")} X</Button>}
             {cur && canSession && <Button variant="danger" onClick={() => { setAmount(null); setDialog("close"); }}>{t("cash_close")}</Button>}
           </div>
         }
@@ -224,7 +234,10 @@ export function CashScreen({ me }: { me: SessionUser }) {
       {dialog && typeof dialog === "object" && (
         <Modal onClose={() => setDialog(null)} wide>
           <ReportView r={dialog.z} />
-          <div className="mt-4 flex justify-end"><Button onClick={() => setDialog(null)}>{t("close")}</Button></div>
+          <div className="mt-4 flex justify-end gap-2">
+            {printer && <Button variant="primary" onClick={() => print(dialog.z)}>{t("pr_print")}</Button>}
+            <Button onClick={() => setDialog(null)}>{t("close")}</Button>
+          </div>
         </Modal>
       )}
       {toast.node}

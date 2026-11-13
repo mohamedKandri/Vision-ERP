@@ -3,10 +3,10 @@
 A local-first POS + back office for one burger shop. It runs 100 % offline on Android
 POS terminals/tablets and on a Windows PC. There's no cloud, no account and no telemetry.
 
-> **Status: Phase 3 of 9.** You get setup, PIN login, staff and roles, permissions,
+> **Status: Phase 4 of 9.** You get setup, PIN login, staff and roles, permissions,
 > settings, taxes, the audit log, and the full menu (products, sizes, modifiers, combos,
-> out-of-stock board, happy hour), the till with payments, and cash sessions (X/Z).
-> Printers, the kitchen screen and LAN sync come in later phases (see [DEVLOG.md](DEVLOG.md)).
+> out-of-stock board, happy hour), the till with payments, cash sessions (X/Z), and printing (receipts,
+> kitchen tickets, cash drawer). The kitchen screen and LAN sync come in later phases (see [DEVLOG.md](DEVLOG.md)).
 
 ## Install
 
@@ -85,11 +85,33 @@ You choose the tax per product (Phase 2). Four taxes come preset: TVA 10 % TTC,
 TVA 20 % TTC, TVA 10 % HT and Exonéré 0 %. **Settings → Sales → VAT rounding** picks
 per-line rounding or global rounding per tax.
 
-## Host vs Client, pairing, printers
+## Host vs Client, pairing
 
-These arrive in later phases. This section will cover them as they land:
-- Phase 4: adding printers (network ESC/POS on port 9100, Bluetooth, USB, SUNMI).
-- Phase 5: Host/Client mode, and pairing a terminal or kitchen screen with a QR code and PIN.
+Coming in Phase 5: Host/Client mode, and pairing a terminal or kitchen screen with a QR code
+and PIN.
+
+## Printers
+
+**Imprimantes** (Owner): **Ajouter une imprimante**, choose the type, then **Test**.
+
+| Type | Address | Works on |
+|---|---|---|
+| Réseau (Wi-Fi/Ethernet) | the printer's IP, e.g. `192.168.1.50` (port 9100 by default, or `ip:port`) | all devices |
+| Bluetooth | pair the printer in Android settings first, then choose it in the list | Android |
+| USB (Windows) | install the printer in Windows (any driver), then choose it in the list | Windows |
+| SUNMI intégrée | nothing to enter: uses the terminal's built-in "InnerPrinter" | SUNMI Android terminals |
+
+- Choose **58 mm or 80 mm** paper. Keep the **PC850** character set unless accents print
+  wrong; then try PC858 or Windows-1252.
+- Switch on **"Imprimante des tickets clients de cette caisse"** on the printer near the till.
+  Switch on **"Tiroir-caisse"** if the cash drawer is plugged into it.
+- **Postes de cuisine**: give each station (Grill, Friteuse, Boissons, Montage) a printer,
+  the kitchen screen, or both. A combo prints each part at its own station.
+- If a printer is off or out of paper, tickets wait in the queue and the till shows a red
+  banner. Fix the printer and tap **Réessayer**. A manager can send the waiting tickets to
+  another printer, or delete one.
+- Arabic receipts and printers set to **mode graphique** print the receipt as an image.
+
 
 ## Development
 

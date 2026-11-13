@@ -431,6 +431,11 @@ pub fn submit(conn: &Connection, me: &SessionUser, s: SubmitIn) -> ApiResult<i64
     }
 
     if s.send {
+        let to_send: Vec<i64> = tx
+            .prepare("SELECT id FROM order_lines WHERE order_id=?1 AND kitchen_status='new' AND voided=0 ORDER BY id")?
+            .query_map([order_id], |r| r.get(0))?
+            .collect::<Result<_, _>>()?;
+        let first_send: bool = tx.query_row("SELECT sent_at IS NULL FROM orders WHERE id=?1", [order_id], |r| r.get(0))?;
         let n = tx.execute(
             "UPDATE order_lines SET kitchen_status='sent', sent_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
              WHERE order_id=?1 AND kitchen_status='new' AND voided=0",
@@ -442,6 +447,9 @@ pub fn submit(conn: &Connection, me: &SessionUser, s: SubmitIn) -> ApiResult<i64
                    sent_at = COALESCE(sent_at, strftime('%Y-%m-%dT%H:%M:%fZ','now')), held = 0 WHERE id=?1",
                 [order_id],
             )?;
+            // Kitchen tickets are queued in this same transaction: they can't be lost.
+            let mode = if first_send { crate::printing::TicketMode::New } else { crate::printing::TicketMode::Add };
+            crate::printing::enqueue_kitchen(&tx, order_id, &to_send, mode, Some(me.id))?;
         }
     }
     if s.hold {
@@ -510,6 +518,7 @@ pub fn remove_line(conn: &Connection, me: &SessionUser, line_id: i64, reason: Op
             "UPDATE order_lines SET voided=1, void_reason=?2, voided_by=?3 WHERE id=?1",
             params![line_id, reason.trim(), by],
         )?;
+        crate::printing::enqueue_kitchen(&tx, order_id, &[line_id], crate::printing::TicketMode::Void, Some(me.id))?;
         audit::log(&tx, Some(me.id), "order.line_voided", Some("order"), Some(&order_id.to_string()),
             Some(json!({"line_id": line_id, "qty": qty, "names": serde_json::from_str::<Value>(&names).unwrap_or(Value::Null), "reason": reason.trim(), "approved_by": by})))?;
     }

@@ -1,4 +1,4 @@
-import { Ban, Banknote, ChefHat, History, Lock, LogOut, Percent, Settings as Cog, ShieldCheck, ShoppingCart, User, Users, UtensilsCrossed } from "lucide-react";
+import { Ban, Banknote, ChefHat, Printer, History, Lock, LogOut, Percent, Settings as Cog, ShieldCheck, ShoppingCart, User, Users, UtensilsCrossed } from "lucide-react";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { applyLang, errorText, LangContext, translate, useT, type Key } from "./i18n";
 import { rpc, setToken, type Lang, type SessionUser, type Settings } from "./lib/rpc";
@@ -6,6 +6,7 @@ import { AuditScreen, MeScreen, PermissionsScreen, TaxesScreen, UsersScreen } fr
 import { CashScreen } from "./screens/CashScreen";
 import { Login } from "./screens/Login";
 import { PosScreen } from "./screens/PosScreen";
+import { PrintersScreen } from "./screens/PrintersScreen";
 import { AvailabilityScreen, MenuScreen } from "./screens/MenuScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { Setup } from "./screens/Setup";
@@ -17,7 +18,7 @@ interface Status {
   version: string;
 }
 
-type Page = "pos" | "cash" | "kitchen" | "menu" | "86" | "settings" | "taxes" | "users" | "permissions" | "audit" | "me";
+type Page = "pos" | "cash" | "kitchen" | "menu" | "printers" | "86" | "settings" | "taxes" | "users" | "permissions" | "audit" | "me";
 
 const NAV: { page: Page; label: Key; icon: ReactNode; perm?: string | string[]; phase?: number }[] = [
   { page: "pos", label: "nav_pos", icon: <ShoppingCart />, perm: "pos.sell" },
@@ -26,6 +27,7 @@ const NAV: { page: Page; label: Key; icon: ReactNode; perm?: string | string[]; 
   { page: "86", label: "nav_86", icon: <Ban />, perm: ["menu.manage", "pos.sell", "kds.use"] },
   { page: "menu", label: "nav_menu", icon: <UtensilsCrossed />, perm: "menu.manage" },
   { page: "settings", label: "nav_settings", icon: <Cog />, perm: "settings.manage" },
+  { page: "printers", label: "nav_printers", icon: <Printer />, perm: "settings.manage" },
   { page: "taxes", label: "nav_taxes", icon: <Percent />, perm: "settings.manage" },
   { page: "users", label: "nav_users", icon: <Users />, perm: "users.manage" },
   { page: "permissions", label: "nav_permissions", icon: <ShieldCheck />, perm: "users.manage" },
@@ -124,6 +126,9 @@ function Shell({
         break;
       case "86":
         body = <AvailabilityScreen />;
+        break;
+      case "printers":
+        body = <PrintersScreen />;
         break;
       case "settings":
         body = <SettingsScreen canEdit={can("settings.manage")} onSaved={onSettings} />;
