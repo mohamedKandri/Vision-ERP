@@ -1,4 +1,4 @@
-import { Ban, Banknote, ChefHat, Printer, Wifi, History, Lock, LogOut, Percent, Settings as Cog, ShieldCheck, ShoppingCart, User, Users, UtensilsCrossed } from "lucide-react";
+import { Ban, Banknote, ChefHat, Printer, Wifi, History, Lock, Percent, Settings as Cog, ShieldCheck, ShoppingCart, User, Users, UtensilsCrossed } from "lucide-react";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { applyLang, errorText, LangContext, translate, useT, type Key } from "./i18n";
 import { rpc, setToken, type Lang, type SessionUser, type Settings } from "./lib/rpc";
@@ -191,37 +191,57 @@ function Shell({
   }
 
   return (
-    <div className="flex h-full flex-col md:flex-row">
-      <nav className="panel order-last flex shrink-0 overflow-x-auto border-t md:order-first md:w-56 md:flex-col md:border-e md:border-t-0">
-        <div className="hidden p-4 md:block">
-          <div className="text-lg font-bold">🍔 BURGER OS</div>
-          <div className="muted text-sm">
-            {user.name} · {t(`role_${user.role}`)}
-          </div>
-        </div>
+    <div className="flex h-full flex-col">
+      <StatusBar user={user} version={version} />
+      <nav aria-label="Menu" className="bar-2 flex h-11 shrink-0 items-stretch overflow-x-auto">
         {items.map((n) => (
           <button
             key={n.page}
             onClick={() => setPage(n.page)}
-            className={`flex min-h-14 min-w-20 shrink-0 flex-col items-center justify-center gap-1 px-3 text-xs md:flex-row md:justify-start md:gap-3 md:text-base ${
-              page === n.page ? "bg-brand/20 text-brand font-semibold" : ""
-            }`}
+            className={`flex shrink-0 items-center gap-2 px-4 text-[13px] font-medium [&>svg]:h-4 [&>svg]:w-4 ${page === n.page ? "bg-brand text-white" : "opacity-80 hover:opacity-100"}`}
           >
             {n.icon}
             <span>{t(n.label)}</span>
           </button>
         ))}
-        <div className="md:mt-auto" />
-        <button onClick={onLogout} className="flex min-h-14 min-w-20 shrink-0 flex-col items-center justify-center gap-1 px-3 text-xs md:flex-row md:justify-start md:gap-3 md:text-base">
+        <div className="flex-1" />
+        <button onClick={onLogout} className="flex shrink-0 items-center gap-2 px-4 text-[13px] font-medium opacity-80 hover:opacity-100 [&>svg]:h-4 [&>svg]:w-4">
           <Lock />
           <span>{t("lock")}</span>
         </button>
-        <div className="muted hidden px-4 pb-3 text-xs md:flex md:items-center md:gap-2">
-          <LogOut className="h-3 w-3" /> v{version}
-        </div>
       </nav>
       <main className="min-h-0 flex-1 overflow-auto">{body}</main>
     </div>
+  );
+}
+
+/** Top status line: product, register, user, connection, clock. */
+function StatusBar({ user, version }: { user: SessionUser; version: string }) {
+  const t = useT();
+  const [now, setNow] = useState(new Date());
+  const [dev, setDevState] = useState<DeviceInfo | null>(null);
+  const online = useOnline(true);
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 1000);
+    rpc<DeviceInfo>("device.get").then(setDevState, () => {});
+    return () => clearInterval(id);
+  }, []);
+  return (
+    <header className="bar flex h-9 shrink-0 items-center gap-5 px-3 text-[13px]">
+      <b className="num text-white">BURGER/OS</b>
+      <span>{t("cash_register")} {dev?.register ?? "main"}</span>
+      <span>
+        {user.name} · {t(`role_${user.role}`)}
+      </span>
+      <div className="flex-1" />
+      {dev?.mode === "client" ? (
+        <span className={online ? "text-emerald-400" : "text-red-400"}>● {online ? dev.host : t("err_offline")}</span>
+      ) : (
+        <span className="text-emerald-400">● {t("dev_mode_host").split(" (")[0]}</span>
+      )}
+      <span className="num opacity-60">v{version}</span>
+      <span className="num">{now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
+    </header>
   );
 }
 

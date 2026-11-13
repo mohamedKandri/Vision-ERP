@@ -60,7 +60,7 @@ export function PinPad({
           0
         </button>
         <button
-          className={`${key} !bg-brand text-stone-950`}
+          className={`${key} !bg-brand text-white`}
           onClick={submit}
           disabled={disabled || busy || pin.length < 4}
         >

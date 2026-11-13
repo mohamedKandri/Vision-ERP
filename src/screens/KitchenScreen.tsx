@@ -81,43 +81,47 @@ export function KitchenScreen() {
           {station !== null && <Button onClick={() => act(rpc("kds.recall", { station_id: station }))}><Undo2 className="inline h-4 w-4" /> {t("kds_recall")}</Button>}
         </div>
       </div>
-      <div className="grid min-h-0 flex-1 auto-rows-min grid-cols-1 gap-3 overflow-auto p-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+      <div className="label grid grid-cols-[110px_90px_200px_1fr_170px] gap-3 border-b line px-3 py-2">
+        <span>N°</span><span>{t("kds_wait")}</span><span>{t("dev_kind")}</span><span>{t("tab_products")}</span><span />
+      </div>
+      <div className="min-h-0 flex-1 overflow-auto">
         {tickets.map((tk) => {
           const mins = Math.floor((now - new Date(tk.sent_at).getTime()) / 60000);
           const secs = Math.floor((now - new Date(tk.sent_at).getTime()) / 1000) % 60;
-          const color = mins >= limits.late ? "bg-red-600" : mins >= limits.warn ? "bg-orange-500" : "bg-emerald-600";
+          const color = mins >= limits.late ? "text-red-500" : mins >= limits.warn ? "text-amber-500" : "text-emerald-500";
           const stationsInTicket = [...new Set(tk.items.map((i) => i.station_id))];
           return (
-            <div key={tk.order_id} className="panel flex flex-col overflow-hidden rounded-2xl">
-              <div className={`flex items-center justify-between px-3 py-2 text-white ${color}`}>
-                <span className="text-3xl font-black">#{tk.split_index ? `${tk.number}-${tk.split_index + 1}` : tk.number}</span>
-                <span className="text-right">
-                  <span className="block text-sm font-semibold">{t(`order_type_${tk.type}` as Key)}{tk.table_name ? ` · ${tk.table_name}` : ""}{tk.customer_name ? ` · ${tk.customer_name}` : ""}</span>
-                  <span className="block font-mono text-lg font-bold" dir="ltr">{String(mins).padStart(2, "0")}:{String(secs).padStart(2, "0")}</span>
-                </span>
-              </div>
-              <div className="flex-1">
+            <div key={tk.order_id} className={`grid grid-cols-[110px_90px_200px_1fr_170px] items-start gap-3 border-b line px-3 py-3 ${mins >= limits.late ? "bg-red-500/5" : ""}`}>
+              <b className="num text-3xl">{tk.split_index ? `${tk.number}-${tk.split_index + 1}` : tk.number}</b>
+              <b className={`num text-xl ${color}`}>{String(mins).padStart(2, "0")}:{String(secs).padStart(2, "0")}</b>
+              <span className="text-[13px] font-semibold uppercase">
+                {t(`order_type_${tk.type}` as Key)}{tk.table_name ? ` · ${tk.table_name}` : ""}
+                {tk.customer_name && <span className="muted block normal-case">{tk.customer_name}</span>}
+              </span>
+              <div className="flex flex-col">
                 {tk.items.map((it) => (
                   <button key={it.id} disabled={it.voided} onClick={() => act(rpc("kds.toggle", { id: it.id }))}
-                    className={`block w-full border-b line px-3 py-2 text-start ${it.done ? "opacity-40 line-through" : ""} ${it.voided ? "bg-red-600/10 line-through opacity-60" : ""}`}>
-                    <span className="text-xl font-bold">{it.qty} × {pickName(it.names, t.lang)}</span>
-                    {(it.details[t.lang] ?? it.details.fr ?? []).map((d, i) => <span key={i} className="block font-semibold">{d}</span>)}
-                    {it.note && <span className="mt-1 block rounded bg-amber-400 px-2 py-0.5 font-bold text-stone-950">⚠ {it.note}</span>}
+                    className={`py-1 text-start ${it.done ? "opacity-40 line-through" : ""} ${it.voided ? "text-red-500 line-through opacity-60" : ""}`}>
+                    <span className="text-lg font-bold">{it.qty} × {pickName(it.names, t.lang)}</span>
+                    {(it.details[t.lang] ?? it.details.fr ?? []).length > 0 && (
+                      <span className="muted ms-2 text-[15px] font-semibold">{(it.details[t.lang] ?? it.details.fr ?? []).join(" · ")}</span>
+                    )}
+                    {it.note && <span className="ms-2 rounded-sm bg-yellow-300 px-2 py-0.5 text-sm font-bold text-stone-900">⚠ {it.note}</span>}
                   </button>
                 ))}
-                {tk.note && <div className="bg-amber-400/20 px-3 py-2 font-semibold">📝 {tk.note}</div>}
+                {tk.note && <div className="mt-1 text-sm font-semibold text-amber-600">{t("pos_note")}: {tk.note}</div>}
               </div>
-              <div className="flex gap-2 p-2">
+              <div className="flex flex-col gap-1">
                 {(station !== null ? [station] : stationsInTicket).map((sid) => (
-                  <Button key={sid} variant="primary" className="flex-1 text-lg" onClick={() => act(rpc("kds.bump", { order_id: tk.order_id, station_id: sid }))}>
-                    {t("kds_bump")}{station === null ? ` · ${pickName(stations.find((s) => s.id === sid)?.names, t.lang)}` : ""}
+                  <Button key={sid} variant="primary" className="h-12 text-[15px]" onClick={() => act(rpc("kds.bump", { order_id: tk.order_id, station_id: sid }))}>
+                    {t("kds_bump").toUpperCase()}{station === null ? ` · ${pickName(stations.find((s) => s.id === sid)?.names, t.lang)}` : ""}
                   </Button>
                 ))}
               </div>
             </div>
           );
         })}
-        {!tickets.length && <p className="muted col-span-full py-20 text-center text-2xl">{t("kds_empty")}</p>}
+        {!tickets.length && <p className="muted py-20 text-center text-2xl">{t("kds_empty")}</p>}
       </div>
       {toast.node}
     </div>
@@ -126,7 +130,7 @@ export function KitchenScreen() {
 
 function StationBtn({ active, onClick, label }: { active: boolean; onClick: () => void; label: string }) {
   return (
-    <button onClick={onClick} className={`min-h-12 rounded-xl px-4 font-semibold ${active ? "bg-brand text-stone-950" : "panel-2 border line"}`}>
+    <button onClick={onClick} className={`h-10 rounded-sm border px-3 text-[13px] font-semibold ${active ? "border-brand bg-brand text-white" : "line bg-[var(--panel)]"}`}>
       {label}
     </button>
   );

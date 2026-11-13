@@ -150,32 +150,34 @@ function ProductsTab({ menu, taxes, defaultTax, reload, toast, fail }: Ctx & { t
           <Button variant="primary" onClick={seed}>{t("load_demo_menu")}</Button>
         </Card>
       ) : (
-        <Card>
-          <div className="flex flex-col divide-y line">
-            {list.map((p, i) => (
-              <div key={p.id} className={`flex min-h-16 items-center gap-3 py-2 ${p.active ? "" : "opacity-50"}`}>
-                <button className="flex min-w-0 flex-1 items-center gap-3 text-start" onClick={() => setEdit(p)}>
-                  <Thumb p={p} menu={menu} />
-                  <div className="min-w-0">
-                    <div className="truncate font-medium">
-                      {pickName(p.names, t.lang)}
-                      {p.kind === "combo" && <span className="ms-2 rounded bg-emerald-600/20 px-1.5 text-xs text-emerald-500">{t("kind_combo")}</span>}
-                      {!p.available && <span className="ms-2 rounded bg-red-600/20 px-1.5 text-xs text-red-500">{t("out_of_stock")}</span>}
-                    </div>
-                    <div className="muted truncate text-sm" dir="ltr">
-                      {priceLabel(p, t.lang)}
-                      {p.happy_hour_price_cents !== null && ` · HH ${formatMoney(p.happy_hour_price_cents, t.lang)}`}
-                    </div>
-                  </div>
-                </button>
-                <button aria-label={t("preview")} className="h-11 w-11 shrink-0 rounded-lg border line" onClick={() => setPreview(p.id)}>
-                  <Eye className="mx-auto h-4 w-4" />
-                </button>
-                {cat !== "all" && <ReorderButtons onUp={() => move("products", list, i, -1, reload)} onDown={() => move("products", list, i, 1, reload)} />}
-              </div>
-            ))}
+        <div className="overflow-x-auto border line bg-[var(--panel)]">
+          <div className="label grid min-w-[760px] grid-cols-[minmax(0,2.2fr)_minmax(0,1fr)_120px_120px_110px_110px] gap-px border-b line bg-[var(--panel-2)]">
+            <span className="px-3 py-2">{t("name")}</span><span className="px-3 py-2">{t("category")}</span><span className="px-3 py-2 text-end">{t("price")}</span>
+            <span className="px-3 py-2">{t("station")}</span><span className="px-3 py-2">{t("available")}</span><span className="px-3 py-2" />
           </div>
-        </Card>
+          {list.map((p, i) => {
+            const c = menu.categories.find((x) => x.id === p.category_id);
+            const st = menu.stations.find((x) => x.id === p.station_id);
+            return (
+              <div key={p.id} className={`grid min-w-[760px] grid-cols-[minmax(0,2.2fr)_minmax(0,1fr)_120px_120px_110px_110px] items-center border-b line text-[13px] hover:bg-[var(--panel-2)] ${p.active ? "" : "opacity-50"}`}>
+                <button className="flex min-w-0 items-center gap-3 px-3 py-2 text-start" onClick={() => setEdit(p)}>
+                  <span className="h-8 w-1.5 shrink-0" style={{ background: c?.color }} />
+                  <span className="min-w-0 truncate font-semibold">{pickName(p.names, t.lang)}</span>
+                  {p.kind === "combo" && <span className="label shrink-0 text-emerald-600">{t("kind_combo")}</span>}
+                  {p.variants.some((v) => v.active) && <span className="muted shrink-0 text-xs">{p.variants.filter((v) => v.active).map((v) => pickName(v.names, t.lang)).join(" · ")}</span>}
+                </button>
+                <span className="muted truncate px-3">{pickName(c?.names, t.lang)}</span>
+                <span className="px-3 text-end font-semibold" dir="ltr">{priceLabel(p, t.lang)}</span>
+                <span className="muted px-3">{st ? pickName(st.names, t.lang) : "—"}</span>
+                <span className={`px-3 font-semibold ${p.available ? "text-emerald-600" : "text-red-600"}`}>{p.available ? t("available") : t("out_of_stock")}</span>
+                <span className="flex justify-end gap-1 px-2">
+                  <button aria-label={t("preview")} className="h-9 w-9 rounded-sm border line" onClick={() => setPreview(p.id)}><Eye className="mx-auto h-4 w-4" /></button>
+                  {cat !== "all" && <ReorderButtons onUp={() => move("products", list, i, -1, reload)} onDown={() => move("products", list, i, 1, reload)} />}
+                </span>
+              </div>
+            );
+          })}
+        </div>
       )}
 
       {edit && (
@@ -203,21 +205,11 @@ function CatChip({ active, onClick, color, label }: { active: boolean; onClick: 
   return (
     <button
       onClick={onClick}
-      className={`min-h-12 shrink-0 rounded-xl border-2 px-4 font-medium ${active ? "text-stone-950" : ""}`}
+      className={`min-h-12 shrink-0 rounded-xl border-2 px-4 font-medium ${active ? "text-white" : ""}`}
       style={{ borderColor: color, background: active ? color : "transparent" }}
     >
       {label}
     </button>
-  );
-}
-
-function Thumb({ p, menu }: { p: Product; menu: Menu }) {
-  const c = menu.categories.find((x) => x.id === p.category_id);
-  if (p.photo) return <img src={p.photo} alt="" className="h-12 w-12 shrink-0 rounded-lg object-cover" />;
-  return (
-    <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg text-2xl" style={{ background: `${c?.color ?? "#888"}33` }}>
-      {CATEGORY_ICONS[c?.icon ?? ""] ?? "🍔"}
-    </span>
   );
 }
 

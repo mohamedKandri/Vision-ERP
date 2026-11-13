@@ -205,7 +205,7 @@ export function PermissionsScreen({ me }: { me: SessionUser }) {
                           disabled={locked}
                           onClick={() => flip(r, p)}
                           aria-pressed={on}
-                          className={`m-1 h-11 w-11 rounded-lg border line text-lg ${on ? "bg-brand text-stone-950" : "panel-2"} disabled:opacity-60`}
+                          className={`m-1 h-11 w-11 rounded-lg border line text-lg ${on ? "bg-brand text-white" : "panel-2"} disabled:opacity-60`}
                         >
                           {on ? "✓" : ""}
                         </button>

@@ -1,7 +1,5 @@
-import { ArrowLeft, ArrowRight } from "lucide-react";
 import { useEffect, useState } from "react";
 import { PinPad } from "../components/PinPad";
-import { Button } from "../components/ui";
 import { errorText, translate } from "../i18n";
 import { rpc, setToken, type Lang, type SessionUser } from "../lib/rpc";
 
@@ -12,10 +10,10 @@ interface Tile {
 }
 
 const roleColor: Record<Tile["role"], string> = {
-  owner: "bg-amber-500",
-  manager: "bg-sky-600",
-  cashier: "bg-emerald-600",
-  kitchen: "bg-rose-600",
+  owner: "bg-slate-600",
+  manager: "bg-blue-700",
+  cashier: "bg-emerald-700",
+  kitchen: "bg-amber-700",
 };
 
 export function Login({ shopName, lang, onLogin }: { shopName: string; lang: Lang; onLogin: (u: SessionUser) => void }) {
@@ -54,48 +52,50 @@ export function Login({ shopName, lang, onLogin }: { shopName: string; lang: Lan
     }
   };
 
-  const Back = lang === "ar" ? ArrowRight : ArrowLeft;
-
   return (
-    <div className="flex min-h-full flex-col items-center justify-center gap-6 p-4">
-      <h1 className="text-3xl font-bold">🍔 {shopName}</h1>
-      {!picked ? (
-        <>
-          <p className="muted text-lg">{t("who_are_you")}</p>
-          <div className="grid w-full max-w-3xl grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
-            {users.map((u) => (
-              <button
-                key={u.id}
-                onClick={() => {
-                  setPicked(u);
-                  setErr(null);
-                  setLockedFor(0);
-                }}
-                className="panel flex min-h-28 flex-col items-center justify-center gap-2 rounded-2xl p-3 active:scale-95 transition"
-              >
-                <span className={`flex h-12 w-12 items-center justify-center rounded-full text-xl font-bold text-white ${roleColor[u.role]}`}>
-                  {u.name.slice(0, 1).toUpperCase()}
-                </span>
-                <span className="font-semibold">{u.name}</span>
-                <span className="muted text-xs">{t(`role_${u.role}`)}</span>
-              </button>
-            ))}
-          </div>
-        </>
-      ) : (
-        <div className="panel w-full max-w-sm rounded-2xl p-5">
-          <div className="mb-3 flex items-center gap-3">
-            <Button variant="plain" onClick={() => setPicked(null)} aria-label={t("back")}>
-              <Back />
-            </Button>
-            <div>
-              <div className="text-lg font-semibold">{picked.name}</div>
-              <div className="muted text-sm">{t("enter_pin")}</div>
+    <div className="flex h-full flex-col">
+      <header className="bar flex h-9 shrink-0 items-center gap-5 px-3 text-[13px]">
+        <b className="num text-white">BURGER/OS</b>
+        <span>{shopName}</span>
+        <div className="flex-1" />
+        <span className="num">{new Date().toLocaleDateString()}</span>
+      </header>
+      <div className="flex flex-1 items-center justify-center p-4">
+        <div className="flex w-full max-w-4xl flex-col gap-px border line bg-[var(--line)] md:flex-row">
+          <section className="flex-1 bg-[var(--panel)] p-6">
+            <h1 className="m-0 text-xl font-bold">{t("who_are_you")}</h1>
+            <p className="muted mb-4 mt-1 text-sm">{t("enter_pin")}</p>
+            <div className="flex flex-col">
+              {users.map((u) => (
+                <button
+                  key={u.id}
+                  onClick={() => {
+                    setPicked(u);
+                    setErr(null);
+                    setLockedFor(0);
+                  }}
+                  className={`flex h-14 items-center gap-3 border-b line px-2 text-start ${picked?.id === u.id ? "sel" : "hover:bg-[var(--panel-2)]"}`}
+                >
+                  <span className={`flex h-9 w-9 items-center justify-center rounded-sm text-sm font-bold text-white ${roleColor[u.role]}`}>{u.name.slice(0, 2).toUpperCase()}</span>
+                  <span className="flex-1 font-semibold">{u.name}</span>
+                  <span className="label">{t(`role_${u.role}`)}</span>
+                </button>
+              ))}
             </div>
-          </div>
-          <PinPad key={attempt} onSubmit={login} busy={busy} disabled={lockedFor > 0} error={lockedFor > 0 ? t("locked", { s: lockedFor }) : err} />
+          </section>
+          <section className="w-full bg-[var(--panel)] p-6 md:w-[380px]">
+            {picked ? (
+              <>
+                <div className="label mb-1">{t("pin")}</div>
+                <div className="mb-4 text-lg font-bold">{picked.name}</div>
+                <PinPad key={attempt} onSubmit={login} busy={busy} disabled={lockedFor > 0} error={lockedFor > 0 ? t("locked", { s: lockedFor }) : err} />
+              </>
+            ) : (
+              <div className="muted flex h-full min-h-60 items-center justify-center text-center">{t("who_are_you")}</div>
+            )}
+          </section>
         </div>
-      )}
+      </div>
     </div>
   );
 }

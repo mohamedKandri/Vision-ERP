@@ -1,39 +1,68 @@
 @import "tailwindcss";
+@import "@fontsource/ibm-plex-sans/400.css";
+@import "@fontsource/ibm-plex-sans/500.css";
+@import "@fontsource/ibm-plex-sans/600.css";
+@import "@fontsource/ibm-plex-sans/700.css";
+@import "@fontsource/jetbrains-mono/500.css";
+@import "@fontsource/jetbrains-mono/700.css";
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* Console design: dense, square, blue accent. Fonts are bundled (works offline). */
 @theme {
-  --color-brand: #f59e0b;
-  --color-brand-strong: #d97706;
+  --color-brand: #1d4ed8;
+  --color-brand-strong: #1e3a8a;
+  --radius-lg: 3px;
+  --radius-xl: 4px;
+  --radius-2xl: 6px;
+  --radius-3xl: 8px;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
 }
 
 :root {
-  --bg: #f5f5f4;
+  --bg: #e9ebef;
   --panel: #ffffff;
-  --panel-2: #f0efed;
-  --text: #1c1917;
-  --muted: #57534e;
-  --line: #d6d3d1;
+  --panel-2: #f6f7f9;
+  --text: #111827;
+  --muted: #6b7280;
+  --line: #cbd0d8;
+  --bar: #111827;
+  --bar-2: #1f2937;
+  --bar-text: #e5e7eb;
+  --sel: #dbeafe;
 }
 .dark {
-  --bg: #0c0a09;
-  --panel: #1c1917;
-  --panel-2: #292524;
-  --text: #fafaf9;
-  --muted: #a8a29e;
-  --line: #44403c;
+  --color-brand: #2563eb;
+  --color-brand-strong: #1d4ed8;
+  --bg: #0a0d12;
+  --panel: #0f141b;
+  --panel-2: #111827;
+  --text: #e5e7eb;
+  --muted: #9ca3af;
+  --line: #273244;
+  --bar: #000000;
+  --bar-2: #111827;
+  --bar-text: #e5e7eb;
+  --sel: #111c33;
 }
 html, body, #root { height: 100%; }
 body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font-family: system-ui, "Segoe UI", Roboto, "Noto Sans Arabic", Tahoma, sans-serif;
+  font-family: "IBM Plex Sans", system-ui, "Segoe UI", Roboto, "Noto Sans Arabic", Tahoma, sans-serif;
+  font-size: 14px;
   -webkit-tap-highlight-color: transparent;
   user-select: none;
   overscroll-behavior: none;
 }
 input, textarea, select { user-select: text; }
+/* Amounts, order numbers, codes and keypads use the mono face. */
+.num, span[dir="ltr"], div[dir="ltr"], b[dir="ltr"] { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .panel { background: var(--panel); border: 1px solid var(--line); }
 .panel-2 { background: var(--panel-2); }
 .muted { color: var(--muted); }
 .line { border-color: var(--line); }
+.bar { background: var(--bar); color: var(--bar-text); }
+.bar-2 { background: var(--bar-2); color: var(--bar-text); }
+.sel { background: var(--sel); }
+.label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }

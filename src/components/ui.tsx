@@ -3,7 +3,7 @@ import { useEffect, useState, type ButtonHTMLAttributes, type ReactNode } from "
 type Variant = "primary" | "ghost" | "danger" | "plain";
 
 const variants: Record<Variant, string> = {
-  primary: "bg-brand text-stone-950 hover:bg-brand-strong active:brightness-90 font-semibold",
+  primary: "bg-brand text-white hover:bg-brand-strong active:brightness-90 font-semibold",
   ghost: "panel-2 border line hover:brightness-110 active:brightness-90",
   danger: "bg-red-600 text-white hover:bg-red-700 active:brightness-90 font-semibold",
   plain: "hover:bg-black/5 dark:hover:bg-white/5",
@@ -204,7 +204,7 @@ export function Tabs<T extends string>({ value, onChange, tabs }: { value: T; on
         <button
           key={t.id}
           onClick={() => onChange(t.id)}
-          className={`min-h-12 shrink-0 rounded-xl px-4 font-medium ${value === t.id ? "bg-brand text-stone-950" : "panel-2 border line"}`}
+          className={`min-h-12 shrink-0 rounded-xl px-4 font-medium ${value === t.id ? "bg-brand text-white" : "panel-2 border line"}`}
         >
           {t.label}
         </button>
