@@ -1,4 +1,4 @@
-import { Ban, Banknote, ChefHat, Printer, Wifi, History, Lock, Percent, Settings as Cog, ShieldCheck, ShoppingCart, User, Users, UtensilsCrossed } from "lucide-react";
+import { Ban, Banknote, ChefHat, LayoutGrid, Printer, Search, Wifi, History, Lock, Percent, Settings as Cog, ShieldCheck, ShoppingCart, User, Users, UtensilsCrossed } from "lucide-react";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { applyLang, errorText, LangContext, translate, useT, type Key } from "./i18n";
 import { rpc, setToken, type Lang, type SessionUser, type Settings } from "./lib/rpc";
@@ -24,20 +24,20 @@ interface Status {
 
 type Page = "pos" | "cash" | "kitchen" | "device" | "menu" | "printers" | "86" | "settings" | "taxes" | "users" | "permissions" | "audit" | "me";
 
-const NAV: { page: Page; label: Key; icon: ReactNode; perm?: string | string[]; phase?: number }[] = [
-  { page: "pos", label: "nav_pos", icon: <ShoppingCart />, perm: "pos.sell" },
-  { page: "cash", label: "nav_cash", icon: <Banknote />, perm: ["cash.session", "cash.in_out"] },
-  { page: "kitchen", label: "nav_kitchen", icon: <ChefHat />, perm: "kds.use" },
-  { page: "86", label: "nav_86", icon: <Ban />, perm: ["menu.manage", "pos.sell", "kds.use"] },
-  { page: "menu", label: "nav_menu", icon: <UtensilsCrossed />, perm: "menu.manage" },
-  { page: "settings", label: "nav_settings", icon: <Cog />, perm: "settings.manage" },
-  { page: "printers", label: "nav_printers", icon: <Printer />, perm: "settings.manage" },
-  { page: "taxes", label: "nav_taxes", icon: <Percent />, perm: "settings.manage" },
-  { page: "users", label: "nav_users", icon: <Users />, perm: "users.manage" },
-  { page: "permissions", label: "nav_permissions", icon: <ShieldCheck />, perm: "users.manage" },
-  { page: "audit", label: "nav_audit", icon: <History />, perm: "audit.view" },
-  { page: "device", label: "nav_device", icon: <Wifi /> },
-  { page: "me", label: "nav_me", icon: <User /> },
+const NAV: { page: Page; label: Key; icon: ReactNode; perm?: string | string[]; phase?: number; color?: string }[] = [
+  { page: "pos", label: "nav_pos", icon: <ShoppingCart />, perm: "pos.sell", color: "#1D4ED8" },
+  { page: "cash", label: "nav_cash", icon: <Banknote />, perm: ["cash.session", "cash.in_out"], color: "#047857" },
+  { page: "kitchen", label: "nav_kitchen", icon: <ChefHat />, perm: "kds.use", color: "#B45309" },
+  { page: "86", label: "nav_86", icon: <Ban />, perm: ["menu.manage", "pos.sell", "kds.use"], color: "#B91C1C" },
+  { page: "menu", label: "nav_menu", icon: <UtensilsCrossed />, perm: "menu.manage", color: "#7C3AED" },
+  { page: "settings", label: "nav_settings", icon: <Cog />, perm: "settings.manage", color: "#374151" },
+  { page: "printers", label: "nav_printers", icon: <Printer />, perm: "settings.manage", color: "#0E7490" },
+  { page: "taxes", label: "nav_taxes", icon: <Percent />, perm: "settings.manage", color: "#4D7C0F" },
+  { page: "users", label: "nav_users", icon: <Users />, perm: "users.manage", color: "#BE185D" },
+  { page: "permissions", label: "nav_permissions", icon: <ShieldCheck />, perm: "users.manage", color: "#9333EA" },
+  { page: "audit", label: "nav_audit", icon: <History />, perm: "audit.view", color: "#475569" },
+  { page: "device", label: "nav_device", icon: <Wifi />, color: "#0369A1" },
+  { page: "me", label: "nav_me", icon: <User />, color: "#64748B" },
 ];
 
 function applyTheme(theme: "dark" | "light") {
@@ -135,12 +135,26 @@ function Shell({
   const t = useT();
   const can = (p?: string | string[]) => !p || (Array.isArray(p) ? p : [p]).some((x) => user.permissions.includes(x));
   const items = NAV.filter((n) => can(n.perm));
-  const [page, setPage] = useState<Page>(items.find((n) => n.page === defaultPage)?.page ?? items[0]?.page ?? "me");
+  // "home" = the app launcher grid (Odoo-style). A kitchen device opens straight on its screen.
+  const [page, setPage] = useState<Page | "home">(items.find((n) => n.page === defaultPage)?.page ?? "home");
+  const [searching, setSearching] = useState(false);
+  useEffect(() => {
+    const k = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setSearching(true);
+      }
+    };
+    window.addEventListener("keydown", k);
+    return () => window.removeEventListener("keydown", k);
+  }, []);
   useAutoLock(onLogout);
 
-  const current = NAV.find((n) => n.page === page)!;
+  const current = NAV.find((n) => n.page === page);
   let body: ReactNode;
-  if (current.phase) {
+  if (!current) {
+    body = <AppGrid items={items} onOpen={setPage} />;
+  } else if (current.phase) {
     body = (
       <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
         <div className="text-6xl">🍔</div>
@@ -192,31 +206,104 @@ function Shell({
 
   return (
     <div className="flex h-full flex-col">
-      <StatusBar user={user} version={version} />
-      <nav aria-label="Menu" className="bar-2 flex h-11 shrink-0 items-stretch overflow-x-auto">
-        {items.map((n) => (
-          <button
-            key={n.page}
-            onClick={() => setPage(n.page)}
-            className={`flex shrink-0 items-center gap-2 px-4 text-[13px] font-medium [&>svg]:h-4 [&>svg]:w-4 ${page === n.page ? "bg-brand text-white" : "opacity-80 hover:opacity-100"}`}
+      <StatusBar
+        user={user}
+        version={version}
+        app={current ? t(current.label) : null}
+        onHome={() => setPage("home")}
+        onSearch={() => setSearching(true)}
+        onLock={onLogout}
+      />
+      <main className="min-h-0 flex-1 overflow-auto">{body}</main>
+      {searching && (
+        <AppSearch
+          items={items}
+          onClose={() => setSearching(false)}
+          onOpen={(p) => {
+            setPage(p);
+            setSearching(false);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+type NavItem = (typeof NAV)[number];
+
+/** Home: every app the user may open, as big tiles. */
+function AppGrid({ items, onOpen }: { items: NavItem[]; onOpen: (p: Page) => void }) {
+  const t = useT();
+  return (
+    <div className="mx-auto grid max-w-5xl grid-cols-3 gap-x-6 gap-y-8 px-6 py-12 sm:grid-cols-4 md:grid-cols-6">
+      {items.map((n) => (
+        <button key={n.page} onClick={() => onOpen(n.page)} className="group flex flex-col items-center gap-2 rounded-lg p-2 hover:bg-[var(--panel)]">
+          <span
+            className="flex h-20 w-20 items-center justify-center rounded-2xl text-white shadow-sm transition group-active:scale-95 [&>svg]:h-9 [&>svg]:w-9"
+            style={{ background: n.color }}
           >
             {n.icon}
-            <span>{t(n.label)}</span>
-          </button>
-        ))}
-        <div className="flex-1" />
-        <button onClick={onLogout} className="flex shrink-0 items-center gap-2 px-4 text-[13px] font-medium opacity-80 hover:opacity-100 [&>svg]:h-4 [&>svg]:w-4">
-          <Lock />
-          <span>{t("lock")}</span>
+          </span>
+          <span className="text-center text-sm font-medium">{t(n.label)}</span>
         </button>
-      </nav>
-      <main className="min-h-0 flex-1 overflow-auto">{body}</main>
+      ))}
+    </div>
+  );
+}
+
+/** Search box over everything: type part of an app's name, Enter opens it. */
+function AppSearch({ items, onClose, onOpen }: { items: NavItem[]; onClose: () => void; onOpen: (p: Page) => void }) {
+  const t = useT();
+  const [q, setQ] = useState("");
+  const [sel, setSel] = useState(0);
+  const norm = (x: string) => x.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const hits = items.filter((n) => !q.trim() || norm(t(n.label)).includes(norm(q.trim())) || n.page.includes(norm(q.trim())));
+  const pick = Math.min(sel, Math.max(hits.length - 1, 0));
+  return (
+    <div className="fixed inset-0 z-[80] flex items-start justify-center bg-black/50 px-4 pt-[12vh]" onClick={onClose}>
+      <div className="panel w-full max-w-xl shadow-2xl" onClick={(e) => e.stopPropagation()} role="dialog" aria-label={t("search")}>
+        <label htmlFor="app-search" className="sr-only">{t("search")}</label>
+        <input
+          id="app-search"
+          autoFocus
+          value={q}
+          placeholder={t("search_apps")}
+          onChange={(e) => {
+            setQ(e.target.value);
+            setSel(0);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") onClose();
+            else if (e.key === "ArrowDown") setSel((x) => Math.min(x + 1, hits.length - 1));
+            else if (e.key === "ArrowUp") setSel((x) => Math.max(x - 1, 0));
+            else if (e.key === "Enter" && hits[pick]) onOpen(hits[pick].page);
+          }}
+          className="h-14 w-full border-b line bg-transparent px-4 text-lg outline-none"
+        />
+        <div className="max-h-[50vh] overflow-auto py-1">
+          {hits.map((n, i) => (
+            <button
+              key={n.page}
+              onClick={() => onOpen(n.page)}
+              onMouseEnter={() => setSel(i)}
+              className={`flex h-12 w-full items-center gap-3 px-4 text-start ${i === pick ? "sel" : ""}`}
+            >
+              <span className="flex h-8 w-8 items-center justify-center rounded-md text-white [&>svg]:h-4 [&>svg]:w-4" style={{ background: n.color }}>{n.icon}</span>
+              <span className="flex-1 font-medium">{t(n.label)}</span>
+              {i === pick && <span className="num muted text-xs">↵</span>}
+            </button>
+          ))}
+          {!hits.length && <p className="muted px-4 py-4">—</p>}
+        </div>
+      </div>
     </div>
   );
 }
 
 /** Top status line: product, register, user, connection, clock. */
-function StatusBar({ user, version }: { user: SessionUser; version: string }) {
+function StatusBar({ user, version, app, onHome, onSearch, onLock }: {
+  user: SessionUser; version: string; app: string | null; onHome: () => void; onSearch: () => void; onLock: () => void;
+}) {
   const t = useT();
   const [now, setNow] = useState(new Date());
   const [dev, setDevState] = useState<DeviceInfo | null>(null);
@@ -227,20 +314,30 @@ function StatusBar({ user, version }: { user: SessionUser; version: string }) {
     return () => clearInterval(id);
   }, []);
   return (
-    <header className="bar flex h-9 shrink-0 items-center gap-5 px-3 text-[13px]">
-      <b className="num text-white">BURGER/OS</b>
-      <span>{t("cash_register")} {dev?.register ?? "main"}</span>
-      <span>
+    <header className="bar flex h-12 shrink-0 items-center gap-4 px-2 text-[13px]">
+      <button onClick={onHome} aria-label={t("home")} title={t("home")} className="flex h-10 w-10 items-center justify-center rounded-md hover:bg-white/10">
+        <LayoutGrid className="h-5 w-5" />
+      </button>
+      <b className="num text-white">{app ?? "BURGER/OS"}</b>
+      <button onClick={onSearch} className="mx-auto flex h-9 w-full max-w-md items-center gap-2 rounded-md bg-white/10 px-3 text-start text-white/70 hover:bg-white/15">
+        <Search className="h-4 w-4" />
+        <span className="flex-1">{t("search_apps")}</span>
+        <span className="num text-xs opacity-60">Ctrl K</span>
+      </button>
+      <span className="hidden lg:inline">{t("cash_register")} {dev?.register ?? "main"}</span>
+      <span className="hidden md:inline">
         {user.name} · {t(`role_${user.role}`)}
       </span>
-      <div className="flex-1" />
       {dev?.mode === "client" ? (
         <span className={online ? "text-emerald-400" : "text-red-400"}>● {online ? dev.host : t("err_offline")}</span>
       ) : (
         <span className="text-emerald-400">● {t("dev_mode_host").split(" (")[0]}</span>
       )}
-      <span className="num opacity-60">v{version}</span>
-      <span className="num">{now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
+      <span className="num hidden opacity-50 xl:inline">v{version}</span>
+      <span className="num">{now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+      <button onClick={onLock} aria-label={t("lock")} title={t("lock")} className="flex h-10 w-10 items-center justify-center rounded-md hover:bg-white/10">
+        <Lock className="h-4 w-4" />
+      </button>
     </header>
   );
 }
