@@ -351,12 +351,14 @@ fn label(lang: &str, key: &str) -> &'static str {
     }
 }
 
-struct Part {
-    station_id: Option<i64>,
-    qty: i64,
-    name: String,
-    details: Vec<String>,
-    note: String,
+pub(crate) struct Part {
+    pub line_id: i64,
+    pub part_index: i64,
+    pub station_id: Option<i64>,
+    pub qty: i64,
+    pub name: String,
+    pub details: Vec<String>,
+    pub note: String,
 }
 
 fn product_station_and_names(conn: &Connection, product_id: i64) -> ApiResult<(Option<i64>, Value)> {
@@ -367,7 +369,7 @@ fn product_station_and_names(conn: &Connection, product_id: i64) -> ApiResult<(O
 
 /// Explode order lines into per-station parts. A combo is split into its parts so the burger
 /// goes to the grill, the fries to the fryer and the drink to the drinks station.
-fn parts(conn: &Connection, ix: &MenuIndex, line_ids: &[i64], lang: &str) -> ApiResult<Vec<Part>> {
+pub(crate) fn parts(conn: &Connection, ix: &MenuIndex, line_ids: &[i64], lang: &str) -> ApiResult<Vec<Part>> {
     let mut out = Vec::new();
     for id in line_ids {
         let (qty, names, details, config, note, station): (i64, String, String, String, String, Option<i64>) = conn.query_row(
@@ -383,11 +385,11 @@ fn parts(conn: &Connection, ix: &MenuIndex, line_ids: &[i64], lang: &str) -> Api
                 // Combo-level options (e.g. "Maxi") are shown on every part.
                 let combo_opts = item::describe(ix, &ItemConfig { combo: None, ..cfg.clone() }, lang);
                 let tag = if combo_opts.is_empty() { format!("[{combo_name}]") } else { format!("[{combo_name} · {}]", combo_opts.join(", ")) };
-                for p in combo_parts {
+                for (pi, p) in combo_parts.iter().enumerate() {
                     let (st, pnames) = product_station_and_names(conn, p.product_id)?;
                     let mut d = item::describe(ix, p, lang);
                     d.push(tag.clone());
-                    out.push(Part { station_id: st, qty, name: item::pick(&pnames, lang), details: d, note: note.clone() });
+                    out.push(Part { line_id: *id, part_index: pi as i64, station_id: st, qty, name: item::pick(&pnames, lang), details: d, note: note.clone() });
                 }
             }
             _ => {
@@ -396,7 +398,7 @@ fn parts(conn: &Connection, ix: &MenuIndex, line_ids: &[i64], lang: &str) -> Api
                     .and_then(|v| v.get(lang).or_else(|| v.get("fr")).cloned())
                     .and_then(|v| serde_json::from_value(v).ok())
                     .unwrap_or_default();
-                out.push(Part { station_id: station, qty, name: item::pick(&names, lang), details: d, note });
+                out.push(Part { line_id: *id, part_index: 0, station_id: station, qty, name: item::pick(&names, lang), details: d, note });
             }
         }
     }

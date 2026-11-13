@@ -376,3 +376,87 @@ Each phase records what was **verified** (by a test or by running the app) and w
   is signed with the debug key (`apksigner verify` passes), and its manifest contains the
   BLUETOOTH, BLUETOOTH_ADMIN and BLUETOOTH_CONNECT permissions. Output:
   `release/burger-os-0.1.0-arm64-test.apk` (7.6 MB). It has not been run on a tablet yet.
+
+## Phase 5: Host/Client LAN, kitchen screen, statuses, customer screen (2026-11-13)
+
+### Built
+- Migration `0005`:
+  - `devices`: paired devices; only a SHA-256 of each device token is stored.
+  - `kitchen_parts`: one row per item per station; a combo is split into its parts.
+  - `outbox`: Client side, for orders made while offline.
+- **Device role** (`net.rs`, stored in `device.json` next to the database): Host or Client,
+  name, kind (till / kitchen screen / customer screen / office), register, port (7420).
+- **Host server** (`server.rs`, axum), on the LAN at port 7420:
+  - `/ping`, and `/pair`, which needs the pairing PIN;
+  - `/rpc` and the `/ws` live channel, which need a paired device token;
+  - user permissions on `/rpc` are checked by the same `dispatch` as on the Host itself.
+- **Pairing**:
+  - The owner opens a 10-minute window, which shows a QR code and a 6-digit PIN.
+  - One device per window; 5 wrong PINs close it.
+  - The Owner can revoke a paired device at any time.
+- **Live updates**: every successful change publishes a topic (orders, menu, cash, print,
+  settings…). The Host's own screen gets it as a Tauri event; Clients get it over the WebSocket.
+  Screens reload what they show, with slow polling as a safety net.
+- **Client** (`client.rs`):
+  - The Rust side forwards every call to the Host. There are no browser restrictions, and
+    the same code runs on Android.
+  - The connection drops and comes back automatically, and a red **Offline** banner shows
+    while the Host is unreachable.
+  - **New orders made while offline go to a local outbox** and replay in order once the
+    Host is back. Payments and edits to existing orders need the Host.
+- **Kitchen Display** (`kds.rs` + Kitchen screen):
+  - Parts are created in the same transaction that sends items to the kitchen.
+  - The screen filters by station and shows the order number, type/table/name, the items
+    with details, and notes highlighted.
+  - The timer turns orange or red after the configured minutes.
+  - Tap an item to mark it done; **Terminé** bumps the ticket for this station;
+    **Rappeler le dernier** recalls the last bumped ticket. A sound plays on new tickets.
+  - When every station is done, the order becomes **Ready**. The till then beeps and shows
+    "Commande #N prête !".
+  - Voided items and orders leave the screen; ready/served on the till clears it.
+  - Stations without a screen (print-only) are skipped.
+- **Customer screen**: big "En préparation" and "Prête !" columns of order numbers.
+  - It's public and shows only numbers.
+  - It opens from the login screen, or by default on a device of the "customer screen" kind.
+- **Device screen**:
+  - On the Host: its addresses, the pairing window, and the paired devices with revoke.
+  - On a Client: join or leave a Host.
+  - On a fresh install, "This device joins an existing shop" is offered next to setup.
+  - The register name now comes from the device's settings.
+
+### Verified
+- **Rust: 88 tests pass**, including:
+  - KDS: station routing with Arabic names, tap/undo, bump → preparing → ready, display
+    board, recall, voids, served clearing the screens, print-only stations skipped.
+  - Pairing rules: wrong PIN, wrong QR code, one device per window, 5 tries close it.
+  - Device tokens: stored hashed, revocable. Topic mapping.
+  - **Two devices over real HTTP + WebSocket** (`lan_test.rs`, real axum server on a socket):
+    - `/ping`; the cashier can't open pairing;
+    - wrong PIN refused, then pairing works;
+    - no device token or a forged one → refused, for HTTP and for the WebSocket;
+    - remote cashier login keeps the same permissions (`settings.set` forbidden);
+    - an order sent from the "tablet" pushes "orders" over the WebSocket;
+    - a remote kitchen user can't sell, and bumping the drinks and assembly stations makes
+      the order ready and puts its number on the public customer board;
+    - a revoked tablet is cut off;
+    - **offline**: a new order goes to the outbox while a payment is refused as offline;
+      after re-pairing and logging in, the outbox replays and the order exists on the Host.
+- Vitest 83 pass; `tsc` clean.
+- **The real app** (dev build) answers `/ping` on 127.0.0.1:7420 and on its LAN address, and
+  refuses `/rpc` without a paired device ("device_unknown").
+- Android: the Rust side (axum, tokio, ureq, tungstenite) compiles for aarch64, and Gradle
+  BUILD SUCCESSFUL.
+
+### Not verified / known issues
+- **No second physical device yet** (the owner is on a work laptop). Real Wi-Fi between a
+  tablet and the PC, the Windows firewall prompt, and Android network permissions are not
+  tested. Two app windows can't run on one PC because they would share the same data folder.
+- The UI screens (device, kitchen, customer) are type-checked and the dev app starts, but
+  they were not driven by a script this phase.
+- The Client types the Host address and PIN by hand. **Scanning the QR with the tablet
+  camera is not done**; pasting the QR text into the address field works.
+- LAN traffic is plain HTTP inside the shop network (no TLS). Each device needs a pairing
+  token, and each user still logs in with their PIN.
+- Offline mode covers new orders only. Payments, edits to existing orders, and closing the
+  till need the Host.
+- Host sessions live in memory, so after a Host restart the users on the tills log in again.

@@ -1,7 +1,11 @@
-import { Ban, Banknote, ChefHat, Printer, History, Lock, LogOut, Percent, Settings as Cog, ShieldCheck, ShoppingCart, User, Users, UtensilsCrossed } from "lucide-react";
+import { Ban, Banknote, ChefHat, Printer, Wifi, History, Lock, LogOut, Percent, Settings as Cog, ShieldCheck, ShoppingCart, User, Users, UtensilsCrossed } from "lucide-react";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { applyLang, errorText, LangContext, translate, useT, type Key } from "./i18n";
 import { rpc, setToken, type Lang, type SessionUser, type Settings } from "./lib/rpc";
+import { loadDevice, type DeviceInfo } from "./lib/device";
+import { useOnline } from "./lib/live";
+import { DeviceScreen, JoinDialog } from "./screens/DeviceScreen";
+import { CustomerDisplay, KitchenScreen } from "./screens/KitchenScreen";
 import { AuditScreen, MeScreen, PermissionsScreen, TaxesScreen, UsersScreen } from "./screens/AdminScreens";
 import { CashScreen } from "./screens/CashScreen";
 import { Login } from "./screens/Login";
@@ -18,12 +22,12 @@ interface Status {
   version: string;
 }
 
-type Page = "pos" | "cash" | "kitchen" | "menu" | "printers" | "86" | "settings" | "taxes" | "users" | "permissions" | "audit" | "me";
+type Page = "pos" | "cash" | "kitchen" | "device" | "menu" | "printers" | "86" | "settings" | "taxes" | "users" | "permissions" | "audit" | "me";
 
 const NAV: { page: Page; label: Key; icon: ReactNode; perm?: string | string[]; phase?: number }[] = [
   { page: "pos", label: "nav_pos", icon: <ShoppingCart />, perm: "pos.sell" },
   { page: "cash", label: "nav_cash", icon: <Banknote />, perm: ["cash.session", "cash.in_out"] },
-  { page: "kitchen", label: "nav_kitchen", icon: <ChefHat />, perm: "kds.use", phase: 5 },
+  { page: "kitchen", label: "nav_kitchen", icon: <ChefHat />, perm: "kds.use" },
   { page: "86", label: "nav_86", icon: <Ban />, perm: ["menu.manage", "pos.sell", "kds.use"] },
   { page: "menu", label: "nav_menu", icon: <UtensilsCrossed />, perm: "menu.manage" },
   { page: "settings", label: "nav_settings", icon: <Cog />, perm: "settings.manage" },
@@ -32,6 +36,7 @@ const NAV: { page: Page; label: Key; icon: ReactNode; perm?: string | string[]; 
   { page: "users", label: "nav_users", icon: <Users />, perm: "users.manage" },
   { page: "permissions", label: "nav_permissions", icon: <ShieldCheck />, perm: "users.manage" },
   { page: "audit", label: "nav_audit", icon: <History />, perm: "audit.view" },
+  { page: "device", label: "nav_device", icon: <Wifi /> },
   { page: "me", label: "nav_me", icon: <User /> },
 ];
 
@@ -43,9 +48,21 @@ export default function App() {
   const [status, setStatus] = useState<Status | null>(null);
   const [fatal, setFatal] = useState<string | null>(null);
   const [user, setUser] = useState<SessionUser | null>(null);
+  const [dev, setDev] = useState<DeviceInfo | null>(null);
+  const [displayExit, setDisplayExit] = useState(false);
+  const [joining, setJoining] = useState(false);
 
   const loadStatus = useCallback(() => {
-    rpc<Status>("app.status").then(setStatus, (e) => setFatal(errorText("fr", e)));
+    loadDevice()
+      .then((d) => {
+        setDev(d);
+        return rpc<Status>("app.status");
+      })
+      .then(setStatus, (e) => {
+        // A Client whose Host is unreachable still starts: show the offline login.
+        if ((e as { code?: string })?.code === "offline") setStatus({ setup_done: true, shop_name: "BURGER OS", default_language: "fr", version: "" });
+        else setFatal(errorText("fr", e));
+      });
   }, []);
   useEffect(loadStatus, [loadStatus]);
 
@@ -64,14 +81,28 @@ export default function App() {
   }, []);
 
   if (fatal) return <p className="p-6 text-red-500">{fatal}</p>;
-  if (!status) return <p className="muted p-6">{translate(lang, "loading")}</p>;
+  if (!status || !dev) return <p className="muted p-6">{translate(lang, "loading")}</p>;
 
   return (
     <LangContext.Provider value={lang}>
-      {!status.setup_done ? (
-        <Setup onDone={loadStatus} />
+      {dev.mode === "client" && <OfflineBanner />}
+      {dev.kind === "display" && !displayExit && status.setup_done ? (
+        <CustomerDisplay shopName={status.shop_name} onExit={() => setDisplayExit(true)} />
+      ) : !status.setup_done ? (
+        <>
+          <Setup onDone={loadStatus} />
+          <div className="fixed bottom-4 end-4">
+            <button className="panel min-h-12 rounded-xl px-4 font-semibold" onClick={() => setJoining(true)}>{translate(lang, "dev_setup_client")}</button>
+          </div>
+          {joining && <JoinDialog onClose={() => setJoining(false)} onJoined={() => location.reload()} />}
+        </>
       ) : !user ? (
-        <Login shopName={status.shop_name} lang={lang} onLogin={setUser} />
+        <>
+          <Login shopName={status.shop_name} lang={lang} onLogin={setUser} />
+          <div className="fixed bottom-4 end-4 flex gap-2">
+            <button className="panel min-h-12 rounded-xl px-4" onClick={() => { setDisplayExit(false); setDev({ ...dev, kind: "display" }); }}>{translate(lang, "disp_open")}</button>
+          </div>
+        </>
       ) : (
         <Shell
           user={user}
@@ -79,6 +110,7 @@ export default function App() {
           onLogout={logout}
           onSettings={(s) => setStatus({ ...status, shop_name: String(s.shop_name), default_language: s.default_language as Lang })}
           version={status.version}
+          defaultPage={dev.kind === "kds" ? "kitchen" : undefined}
         />
       )}
     </LangContext.Provider>
@@ -91,17 +123,19 @@ function Shell({
   onLogout,
   onSettings,
   version,
+  defaultPage,
 }: {
   user: SessionUser;
   setUser: (u: SessionUser) => void;
   onLogout: () => void;
   onSettings: (s: Settings) => void;
   version: string;
+  defaultPage?: Page;
 }) {
   const t = useT();
   const can = (p?: string | string[]) => !p || (Array.isArray(p) ? p : [p]).some((x) => user.permissions.includes(x));
   const items = NAV.filter((n) => can(n.perm));
-  const [page, setPage] = useState<Page>(items[0]?.page ?? "me");
+  const [page, setPage] = useState<Page>(items.find((n) => n.page === defaultPage)?.page ?? items[0]?.page ?? "me");
   useAutoLock(onLogout);
 
   const current = NAV.find((n) => n.page === page)!;
@@ -126,6 +160,12 @@ function Shell({
         break;
       case "86":
         body = <AvailabilityScreen />;
+        break;
+      case "kitchen":
+        body = <KitchenScreen />;
+        break;
+      case "device":
+        body = <DeviceScreen canManage={can("settings.manage")} />;
         break;
       case "printers":
         body = <PrintersScreen />;
@@ -181,6 +221,25 @@ function Shell({
         </div>
       </nav>
       <main className="min-h-0 flex-1 overflow-auto">{body}</main>
+    </div>
+  );
+}
+
+/** Client devices: red banner while the Host can't be reached, with the outbox count. */
+function OfflineBanner() {
+  const online = useOnline(true);
+  const [queued, setQueued] = useState(0);
+  useEffect(() => {
+    const tick = () => rpc<DeviceInfo>("device.get").then((d) => setQueued(d.outbox), () => {});
+    tick();
+    const id = setInterval(tick, 3000);
+    return () => clearInterval(id);
+  }, [online]);
+  if (online && !queued) return null;
+  return (
+    <div className="fixed inset-x-0 top-0 z-[70] bg-red-600 px-4 py-2 text-center font-semibold text-white" role="alert">
+      {!online && translate((document.documentElement.lang as Lang) || "fr", "offline_banner")}
+      {queued > 0 && ` · ${translate((document.documentElement.lang as Lang) || "fr", "offline_queued", { n: queued })}`}
     </div>
   );
 }

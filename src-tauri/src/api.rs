@@ -64,6 +64,17 @@ fn user_count(conn: &Connection) -> ApiResult<i64> {
     Ok(conn.query_row("SELECT COUNT(*) FROM users", [], |r| r.get(0))?)
 }
 
+/// Dispatch, then tell every screen (local and paired devices) what changed.
+pub fn handle(core: &Core, token: Option<&str>, method: &str, params: Value) -> ApiResult<Value> {
+    let r = dispatch(core, token, method, params);
+    if r.is_ok() {
+        if let Some(topic) = crate::net::topic_of(method) {
+            crate::net::publish(topic);
+        }
+    }
+    r
+}
+
 pub fn dispatch(core: &Core, token: Option<&str>, method: &str, params: Value) -> ApiResult<Value> {
     // Methods that work without a session.
     match method {
@@ -80,6 +91,11 @@ pub fn dispatch(core: &Core, token: Option<&str>, method: &str, params: Value) -
         "setup.init" => {
             let conn = core.conn.lock().unwrap();
             return setup_init(&conn, p(params)?);
+        }
+        "display.board" => {
+            // Public: only order numbers, for the customer-facing screen.
+            let conn = core.conn.lock().unwrap();
+            return crate::kds::display_board(&conn);
         }
         "auth.users" => {
             let conn = core.conn.lock().unwrap();
@@ -726,6 +742,56 @@ pub fn dispatch(core: &Core, token: Option<&str>, method: &str, params: Value) -
                 }
             }
             audit::log(&conn, Some(me.id), "table.saved", Some("table"), None, Some(json!({"name": t.name.trim(), "active": t.active})))?;
+            Ok(Value::Null)
+        }
+
+        // ---------------------------------------------------------- kitchen display
+        "kds.stations" => {
+            require(&me, "kds.use")?;
+            crate::kds::screen_stations(&conn)
+        }
+        "kds.board" => {
+            require(&me, "kds.use")?;
+            crate::kds::board(&conn, params.get("station_id").and_then(|v| v.as_i64()))
+        }
+        "kds.toggle" => {
+            require(&me, "kds.use")?;
+            crate::kds::toggle(&conn, p::<IdP>(params)?.id)?;
+            Ok(Value::Null)
+        }
+        "kds.bump" => {
+            require(&me, "kds.use")?;
+            #[derive(Deserialize)]
+            struct P {
+                order_id: i64,
+                station_id: i64,
+            }
+            let P { order_id, station_id } = p(params)?;
+            crate::kds::bump(&conn, order_id, station_id)?;
+            Ok(Value::Null)
+        }
+        "kds.recall" => {
+            require(&me, "kds.use")?;
+            #[derive(Deserialize)]
+            struct P {
+                station_id: i64,
+            }
+            Ok(json!({ "order_id": crate::kds::recall(&conn, p::<P>(params)?.station_id)? }))
+        }
+
+        // ---------------------------------------------------------- devices (Host)
+        "devices.pairing_start" => {
+            require(&me, "settings.manage")?;
+            audit::log(&conn, Some(me.id), "device.pairing_started", None, None, None)?;
+            Ok(crate::net::start_pairing())
+        }
+        "devices.list" => {
+            require(&me, "settings.manage")?;
+            crate::net::list_devices(&conn)
+        }
+        "devices.revoke" => {
+            require(&me, "settings.manage")?;
+            crate::net::revoke_device(&conn, me.id, p::<IdP>(params)?.id)?;
             Ok(Value::Null)
         }
 

@@ -10,6 +10,8 @@ import { orderLabel, type Order, type OrderLine, type OrderType } from "../lib/o
 import { buildReceipt } from "../lib/receipt";
 import { isApiError, rpc, type Lang, type SessionUser, type Settings, type TaxRow } from "../lib/rpc";
 import { CATEGORY_ICONS } from "./MenuScreen";
+import { device } from "../lib/device";
+import { useLive } from "../lib/live";
 import { PrintProblems } from "./PrintersScreen";
 import { printReceipt, type ReceiptPrinter } from "../lib/print";
 
@@ -39,13 +41,8 @@ interface Draft {
   delivery_fee_cents: number | null;
 }
 
-export const getRegister = () => {
-  try {
-    return localStorage.getItem("burger.register") || "main";
-  } catch {
-    return "main";
-  }
-};
+/** This device's register (Settings → Device). */
+export const getRegister = () => device()?.register || "main";
 const getPaper = (): 32 | 48 => {
   try {
     return localStorage.getItem("burger.paper") === "58" ? 32 : 48;
@@ -110,20 +107,28 @@ export function PosScreen({ me }: { me: SessionUser }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [register]);
   useEffect(() => void loadCtx(), [loadCtx]);
+  // Menu, 86'd items, prices or the till changed on any device: reload.
+  useLive(["menu", "cash", "settings", "print"], loadCtx, 60000);
 
-  // Ready orders: poll the Host, beep when a new one is ready (the KDS sets it in Phase 5).
-  useEffect(() => {
-    let last = 0;
-    const tick = () =>
-      rpc<unknown[]>("orders.list", { scope: "ready" }).then((r) => {
-        if (r.length > last) beep();
-        last = r.length;
-        setReadyCount(r.length);
-      }, () => {});
-    tick();
-    const id = setInterval(tick, 10000);
-    return () => clearInterval(id);
+  // Ready orders: pushed live when the kitchen bumps; beep + toast when a new one is ready.
+  const lastReady = useRef<number[]>([]);
+  const tickReady = useCallback(() => {
+    rpc<{ id: number; number: number; split_index: number }[]>("orders.list", { scope: "ready" }).then((r) => {
+      const fresh = r.filter((o) => !lastReady.current.includes(o.id));
+      if (fresh.length && lastReady.current.length + fresh.length > 0 && r.length >= lastReady.current.length) {
+        beep();
+        toast.ok(t("pos_order_ready", { n: orderLabel(fresh[0]) }));
+      }
+      lastReady.current = r.map((o) => o.id);
+      setReadyCount(r.length);
+    }, () => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  useEffect(() => tickReady(), [tickReady]);
+  useLive(["orders"], () => {
+    tickReady();
+    if (order) rpc<Order>("orders.get", { id: order.id }).then(setOrder, () => {});
+  }, 15000);
 
   const ix = useMemo(() => (ctx ? new MenuIndex(ctx.menu) : null), [ctx]);
   const taxById = useMemo(() => new Map((ctx?.taxes ?? []).map((x) => [x.id, x])), [ctx]);
@@ -192,7 +197,7 @@ export function PosScreen({ me }: { me: SessionUser }) {
   };
 
   const submit = async (opts: { send?: boolean; hold?: boolean; hold_label?: string } = {}): Promise<Order> => {
-    const o = await rpc<Order>("orders.submit", {
+    const o = await rpc<Order & { offline?: boolean }>("orders.submit", {
       order_id: order?.id ?? null,
       type: draft.type,
       table_id: draft.type === "dine_in" ? draft.table_id : null,
@@ -206,6 +211,12 @@ export function PosScreen({ me }: { me: SessionUser }) {
       hold_label: opts.hold_label ?? null,
       register,
     });
+    if (o.offline) {
+      // Kept on this device until the Host is reachable again.
+      toast.ok(t("offline_saved"));
+      newOrder();
+      throw { code: "cancelled", message: "offline" };
+    }
     setOrder(o);
     setCart([]);
     return o;

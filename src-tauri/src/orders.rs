@@ -450,6 +450,7 @@ pub fn submit(conn: &Connection, me: &SessionUser, s: SubmitIn) -> ApiResult<i64
             // Kitchen tickets are queued in this same transaction: they can't be lost.
             let mode = if first_send { crate::printing::TicketMode::New } else { crate::printing::TicketMode::Add };
             crate::printing::enqueue_kitchen(&tx, order_id, &to_send, mode, Some(me.id))?;
+            crate::kds::create_parts(&tx, order_id, &to_send)?;
         }
     }
     if s.hold {
@@ -519,6 +520,7 @@ pub fn remove_line(conn: &Connection, me: &SessionUser, line_id: i64, reason: Op
             params![line_id, reason.trim(), by],
         )?;
         crate::printing::enqueue_kitchen(&tx, order_id, &[line_id], crate::printing::TicketMode::Void, Some(me.id))?;
+        crate::kds::void_line(&tx, line_id)?;
         audit::log(&tx, Some(me.id), "order.line_voided", Some("order"), Some(&order_id.to_string()),
             Some(json!({"line_id": line_id, "qty": qty, "names": serde_json::from_str::<Value>(&names).unwrap_or(Value::Null), "reason": reason.trim(), "approved_by": by})))?;
     }
@@ -718,6 +720,7 @@ pub fn set_status(conn: &Connection, order_id: i64, status: &str) -> ApiResult<(
         tx.execute(&format!("UPDATE orders SET {c}=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?1"), [order_id])?;
     }
     if status == "ready" || status == "served" {
+        crate::kds::clear_order(&tx, order_id)?;
         tx.execute("UPDATE order_lines SET kitchen_status='done' WHERE order_id=?1 AND kitchen_status='sent'", [order_id])?;
     }
     auto_close(&tx, order_id)?;
@@ -742,6 +745,7 @@ pub fn void(conn: &Connection, me: &SessionUser, order_id: i64, reason: &str, ap
         "UPDATE orders SET status='voided', held=0, voided_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'), voided_by=?2, void_reason=?3 WHERE id=?1",
         params![order_id, by, reason.trim()],
     )?;
+    crate::kds::void_order(&tx, order_id)?;
     audit::log(&tx, Some(me.id), "order.voided", Some("order"), Some(&order_id.to_string()),
         Some(json!({"reason": reason.trim(), "total_cents": o.total_cents, "approved_by": by})))?;
     tx.commit()?;

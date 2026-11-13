@@ -3,10 +3,11 @@
 A local-first POS + back office for one burger shop. It runs 100 % offline on Android
 POS terminals/tablets and on a Windows PC. There's no cloud, no account and no telemetry.
 
-> **Status: Phase 4 of 9.** You get setup, PIN login, staff and roles, permissions,
+> **Status: Phase 5 of 9.** You get setup, PIN login, staff and roles, permissions,
 > settings, taxes, the audit log, and the full menu (products, sizes, modifiers, combos,
 > out-of-stock board, happy hour), the till with payments, cash sessions (X/Z), and printing (receipts,
-> kitchen tickets, cash drawer). The kitchen screen and LAN sync come in later phases (see [DEVLOG.md](DEVLOG.md)).
+> kitchen tickets, cash drawer), several devices on the Wi-Fi, the kitchen screen and the
+> customer screen. Stock, purchasing, reports and customers come in later phases (see [DEVLOG.md](DEVLOG.md)).
 
 ## Install
 
@@ -87,8 +88,37 @@ per-line rounding or global rounding per tax.
 
 ## Host vs Client, pairing
 
-Coming in Phase 5: Host/Client mode, and pairing a terminal or kitchen screen with a QR code
-and PIN.
+- The **Host** is the device that keeps the data (usually the back-office PC or the main till).
+  It must stay on and on the same Wi-Fi as the others. Any device you set up first is a Host.
+- Every other till, kitchen screen or customer screen is a **Client**.
+
+**Pair a new device:**
+1. On the Host, log in as Owner, open **Appareil**, then **Associer un appareil**. A 6-digit
+   code and the Host address (e.g. `192.168.1.20:7420`) appear, valid for 10 minutes.
+2. Install the app on the new device. On its first screen tap **"Cet appareil rejoint une
+   boutique existante"**. If the device is already in use, go to Appareil →
+   **Rejoindre un Hôte**.
+3. Type the address and the code, give the device a name, and choose what it's used as:
+   **Caisse**, **Écran cuisine**, **Écran client** or **Bureau**.
+4. Staff log in with their usual PINs. A kitchen screen opens straight on the kitchen view;
+   a customer screen shows the Preparing/Ready board.
+
+On Windows, allow BURGER OS through the firewall when asked, so the tablets can reach it.
+In Appareil on the Host, **Retirer** disconnects a lost or stolen device.
+
+**When the Wi-Fi drops:**
+- A red banner shows on the till. New orders are kept on the tablet and sent automatically
+  when the connection is back. Payments wait for the Host.
+- A kitchen screen just reconnects.
+
+## Kitchen screen
+
+- Choose a station (Grill, Friteuse…) or **Tous**. Each ticket shows the number, the type and
+  table, the items and notes, and a timer that turns orange and then red.
+- Tap an item when it's done. **Terminé** sends the ticket away for this station, and
+  **Rappeler le dernier** brings back the last one.
+- When every station is done, the order turns **Prête**: the till beeps, and the customer
+  screen shows the number.
 
 ## Printers
 
