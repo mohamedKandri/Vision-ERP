@@ -3,8 +3,9 @@
 A local-first POS + back office for one burger shop. It runs 100 % offline on Android
 POS terminals/tablets and on a Windows PC. There's no cloud, no account and no telemetry.
 
-> **Status: Phase 1 of 9.** You get setup, PIN login, staff and roles, permissions,
-> settings, taxes and the audit log. The till, kitchen screen, printers and LAN sync
+> **Status: Phase 2 of 9.** You get setup, PIN login, staff and roles, permissions,
+> settings, taxes, the audit log, and the full menu (products, sizes, modifiers, combos,
+> out-of-stock board, happy hour). The till, kitchen screen, printers and LAN sync
 > come in later phases (see [DEVLOG.md](DEVLOG.md)).
 
 ## Install
@@ -37,6 +38,22 @@ The first device you set up becomes the **Host**. It owns the database.
 - The screen locks automatically after 5 minutes without a touch. Change this in **Settings → Sales**.
 - Every login, failed login, manager override, setting change, tax change, staff change
   and permission change is written to the **Audit log**.
+
+## Menu
+
+**Menu** (Owner and Manager) has three tabs:
+- **Products**: tap a product to edit it, or use 👁 to preview the popup the till will show.
+  - Variants (Single/Double/Triple) each have their own price.
+  - **Modifier groups** set what the cashier can pick: doneness, extras, remove…
+  - A **combo** is made of slots (Burger / Side / Drink). Each choice can cost extra, and one is the default.
+- **Categories**: color, icon and order.
+- **Modifiers**: min/max rules, and option types *Choice*, *Extra* (+price, can repeat) and *Remove* (free).
+
+**Ruptures** (also open to cashiers and the kitchen) marks an item out of stock in one tap.
+The till won't sell it until it's back.
+
+Happy hour: set a happy-hour price on a product or variant, then switch it on and set the
+hours in **Settings → Happy hour**.
 
 ## Taxes (Odoo-style)
 

@@ -6,7 +6,7 @@
 
 use crate::auth::{self, SessionUser, PERMISSIONS, ROLES};
 use crate::error::{ApiError, ApiResult};
-use crate::{audit, settings};
+use crate::{audit, menu, settings};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
@@ -293,7 +293,7 @@ pub fn dispatch(core: &Core, token: Option<&str>, method: &str, params: Value) -
             if let Some(bad) = permissions.iter().find(|x| !PERMISSIONS.contains(&x.as_str())) {
                 return Err(ApiError::invalid(format!("unknown permission {bad}")));
             }
-            let tx = conn.unchecked_transaction()?;
+            let tx = crate::db::atomic(&conn)?;
             tx.execute("DELETE FROM role_permissions WHERE role=?1", [&role])?;
             for perm in &permissions {
                 tx.execute("INSERT OR IGNORE INTO role_permissions (role, permission) VALUES (?1, ?2)", params![role, perm])?;
@@ -301,6 +301,66 @@ pub fn dispatch(core: &Core, token: Option<&str>, method: &str, params: Value) -
             tx.commit()?;
             audit::log(&conn, Some(me.id), "permissions.changed", Some("role"), Some(&role), Some(json!({ "permissions": permissions })))?;
             Ok(json!(auth::permissions_for_role(&conn, &role)?))
+        }
+
+        // ---------------------------------------------------------- menu
+        "menu.get" => {
+            #[derive(Deserialize, Default)]
+            struct P {
+                #[serde(default)]
+                all: bool,
+            }
+            let P { all } = if params.is_null() { P::default() } else { p(params)? };
+            if all {
+                require(&me, "menu.manage")?;
+            }
+            Ok(json!(menu::get_menu(&conn, all)?))
+        }
+        "categories.save" => {
+            require(&me, "menu.manage")?;
+            Ok(json!({ "id": menu::save_category(&conn, me.id, p(params)?)? }))
+        }
+        "modifier_groups.save" => {
+            require(&me, "menu.manage")?;
+            Ok(json!({ "id": menu::save_group(&conn, me.id, p(params)?)? }))
+        }
+        "products.save" => {
+            require(&me, "menu.manage")?;
+            Ok(json!({ "id": menu::save_product(&conn, me.id, p(params)?)? }))
+        }
+        "products.set_available" => {
+            // Cashiers and the kitchen can 86 an item during service.
+            if !["menu.manage", "pos.sell", "kds.use"].iter().any(|x| me.permissions.iter().any(|p| p == x)) {
+                return Err(ApiError::forbidden("menu.manage"));
+            }
+            #[derive(Deserialize)]
+            struct P {
+                id: i64,
+                available: bool,
+            }
+            let P { id, available } = p(params)?;
+            menu::set_available(&conn, me.id, id, available)?;
+            Ok(Value::Null)
+        }
+        "menu.reorder" => {
+            require(&me, "menu.manage")?;
+            #[derive(Deserialize)]
+            struct P {
+                table: String,
+                ids: Vec<i64>,
+            }
+            let P { table, ids } = p(params)?;
+            menu::reorder(&conn, &table, &ids)?;
+            Ok(Value::Null)
+        }
+        "menu.seed_demo" => {
+            require(&me, "menu.manage")?;
+            let tax = settings::get(&conn, "default_tax_id")?.as_i64().unwrap_or(1);
+            let done = crate::seed::seed_demo_menu(&conn, me.id, tax)?;
+            if !done {
+                return Err(ApiError::new("conflict", "the menu is not empty"));
+            }
+            Ok(Value::Null)
         }
 
         "audit.list" => {
@@ -326,6 +386,8 @@ struct SetupParams {
     owner_pin: String,
     #[serde(default)]
     demo_users: bool,
+    #[serde(default)]
+    demo_menu: bool,
 }
 
 pub const DEMO_USERS: &[(&str, &str, &str)] = &[
@@ -342,7 +404,7 @@ fn setup_init(conn: &Connection, s: SetupParams) -> ApiResult<Value> {
         return Err(ApiError::invalid("shop name and owner name required"));
     }
     auth::validate_pin(&s.owner_pin)?;
-    let tx = conn.unchecked_transaction()?;
+    let tx = crate::db::atomic(conn)?;
     let mut m = Map::new();
     m.insert("shop_name".into(), json!(s.shop_name.trim()));
     m.insert("default_language".into(), json!(s.language));
@@ -360,7 +422,10 @@ fn setup_init(conn: &Connection, s: SetupParams) -> ApiResult<Value> {
             )?;
         }
     }
-    audit::log(&tx, Some(owner_id), "setup.init", None, None, Some(json!({ "demo_users": s.demo_users })))?;
+    if s.demo_menu {
+        crate::seed::seed_demo_menu(&tx, owner_id, 1)?;
+    }
+    audit::log(&tx, Some(owner_id), "setup.init", None, None, Some(json!({ "demo_users": s.demo_users, "demo_menu": s.demo_menu })))?;
     tx.commit()?;
     Ok(json!({ "owner_id": owner_id }))
 }
@@ -392,7 +457,7 @@ fn save_user(conn: &Connection, me: &SessionUser, u: SaveUser) -> ApiResult<Valu
         Some(pin) => Some(auth::hash_pin(pin)?),
         None => None,
     };
-    let tx = conn.unchecked_transaction()?;
+    let tx = crate::db::atomic(conn)?;
     let (id, action) = match u.id {
         None => {
             let hash = pin_hash.ok_or_else(|| ApiError::invalid("PIN required for a new user"))?;
@@ -574,6 +639,25 @@ mod tests {
         let t = list.as_array().unwrap().iter().find(|t| t["id"] == r["id"]).unwrap();
         assert_eq!(t["price_include"], json!(false));
         assert!(dispatch(&core, Some(&owner), "taxes.save", json!({"name": "Bad", "rate_bp": 20000, "price_include": true, "active": true})).is_err());
+    }
+
+    #[test]
+    fn menu_permissions_and_demo_seed() {
+        let core = Core::new(open_in_memory().unwrap());
+        dispatch(&core, None, "setup.init", json!({"shop_name": "T", "language": "fr", "owner_name": "O", "owner_pin": "1234", "demo_users": true, "demo_menu": true})).unwrap();
+        let cashier = login(&core, "Salma", "3333");
+        let kitchen = login(&core, "Youssef", "4444");
+        let owner = login(&core, "O", "1234");
+        let m = dispatch(&core, Some(&cashier), "menu.get", Value::Null).unwrap();
+        let products = m["products"].as_array().unwrap();
+        assert!(products.len() >= 30);
+        let id = products[0]["id"].clone();
+        assert_eq!(dispatch(&core, Some(&cashier), "menu.get", json!({"all": true})).unwrap_err().code, "forbidden");
+        assert_eq!(dispatch(&core, Some(&cashier), "categories.save", json!({"names": {"fr": "X"}, "color": "#000000", "icon": "burger", "active": true})).unwrap_err().code, "forbidden");
+        dispatch(&core, Some(&kitchen), "products.set_available", json!({"id": id, "available": false})).unwrap();
+        let m = dispatch(&core, Some(&owner), "menu.get", json!({"all": true})).unwrap();
+        assert_eq!(m["products"].as_array().unwrap().iter().find(|p| p["id"] == id).unwrap()["available"], json!(false));
+        assert_eq!(dispatch(&core, Some(&owner), "menu.seed_demo", Value::Null).unwrap_err().code, "conflict");
     }
 
     #[test]

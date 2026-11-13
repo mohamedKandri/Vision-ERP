@@ -10,6 +10,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
   const [pin, setPin] = useState("");
   const [pin2, setPin2] = useState("");
   const [demo, setDemo] = useState(true);
+  const [demoMenu, setDemoMenu] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const t = (k: Parameters<typeof translate>[1]) => translate(lang, k);
@@ -22,7 +23,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
     setBusy(true);
     setErr(null);
     try {
-      await rpc("setup.init", { shop_name: shop, language: lang, owner_name: owner, owner_pin: pin, demo_users: demo });
+      await rpc("setup.init", { shop_name: shop, language: lang, owner_name: owner, owner_pin: pin, demo_users: demo, demo_menu: demoMenu });
       onDone();
     } catch (e) {
       setErr(errorText(lang, e));
@@ -60,6 +61,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
               </Field>
             </div>
             <Toggle checked={demo} onChange={setDemo} label={t("demo_users")} />
+            <Toggle checked={demoMenu} onChange={setDemoMenu} label={t("demo_menu")} />
             {err && <p className="text-red-500">{err}</p>}
             <Button variant="primary" disabled={!valid || busy} onClick={submit}>
               {t("start")}

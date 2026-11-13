@@ -1,9 +1,10 @@
-import { ChefHat, History, Lock, LogOut, Percent, Settings as Cog, ShieldCheck, ShoppingCart, User, Users } from "lucide-react";
+import { Ban, ChefHat, History, Lock, LogOut, Percent, Settings as Cog, ShieldCheck, ShoppingCart, User, Users, UtensilsCrossed } from "lucide-react";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { applyLang, errorText, LangContext, translate, useT, type Key } from "./i18n";
 import { rpc, setToken, type Lang, type SessionUser, type Settings } from "./lib/rpc";
 import { AuditScreen, MeScreen, PermissionsScreen, TaxesScreen, UsersScreen } from "./screens/AdminScreens";
 import { Login } from "./screens/Login";
+import { AvailabilityScreen, MenuScreen } from "./screens/MenuScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { Setup } from "./screens/Setup";
 
@@ -14,11 +15,13 @@ interface Status {
   version: string;
 }
 
-type Page = "pos" | "kitchen" | "settings" | "taxes" | "users" | "permissions" | "audit" | "me";
+type Page = "pos" | "kitchen" | "menu" | "86" | "settings" | "taxes" | "users" | "permissions" | "audit" | "me";
 
-const NAV: { page: Page; label: Key; icon: ReactNode; perm?: string; phase?: number }[] = [
+const NAV: { page: Page; label: Key; icon: ReactNode; perm?: string | string[]; phase?: number }[] = [
   { page: "pos", label: "nav_pos", icon: <ShoppingCart />, perm: "pos.sell", phase: 3 },
   { page: "kitchen", label: "nav_kitchen", icon: <ChefHat />, perm: "kds.use", phase: 5 },
+  { page: "86", label: "nav_86", icon: <Ban />, perm: ["menu.manage", "pos.sell", "kds.use"] },
+  { page: "menu", label: "nav_menu", icon: <UtensilsCrossed />, perm: "menu.manage" },
   { page: "settings", label: "nav_settings", icon: <Cog />, perm: "settings.manage" },
   { page: "taxes", label: "nav_taxes", icon: <Percent />, perm: "settings.manage" },
   { page: "users", label: "nav_users", icon: <Users />, perm: "users.manage" },
@@ -91,7 +94,7 @@ function Shell({
   version: string;
 }) {
   const t = useT();
-  const can = (p?: string) => !p || user.permissions.includes(p);
+  const can = (p?: string | string[]) => !p || (Array.isArray(p) ? p : [p]).some((x) => user.permissions.includes(x));
   const items = NAV.filter((n) => can(n.perm));
   const [page, setPage] = useState<Page>(items[0]?.page ?? "me");
   useAutoLock(onLogout);
@@ -107,6 +110,12 @@ function Shell({
     );
   } else {
     switch (page) {
+      case "menu":
+        body = <MenuScreen />;
+        break;
+      case "86":
+        body = <AvailabilityScreen />;
+        break;
       case "settings":
         body = <SettingsScreen canEdit={can("settings.manage")} onSaved={onSettings} />;
         break;

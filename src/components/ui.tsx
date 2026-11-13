@@ -100,7 +100,7 @@ export function Card({ title, children, actions }: { title?: string; children: R
   );
 }
 
-export function Modal({ children, onClose }: { children: ReactNode; onClose: () => void }) {
+export function Modal({ children, onClose, wide }: { children: ReactNode; onClose: () => void; wide?: boolean }) {
   useEffect(() => {
     const k = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", k);
@@ -108,7 +108,7 @@ export function Modal({ children, onClose }: { children: ReactNode; onClose: () 
   }, [onClose]);
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
-      <div className="panel max-h-[92vh] w-full max-w-lg overflow-auto rounded-2xl p-5" onClick={(e) => e.stopPropagation()}>
+      <div className={`panel max-h-[92vh] w-full ${wide ? "max-w-4xl" : "max-w-lg"} overflow-auto rounded-2xl p-5`} onClick={(e) => e.stopPropagation()}>
         {children}
       </div>
     </div>
@@ -138,4 +138,77 @@ export function useToast() {
     ok: (text: string) => setMsg({ text, error: false }),
     error: (text: string) => setMsg({ text, error: true }),
   };
+}
+
+/** Money input in DH; stores integer cents. `nullable` lets the field be emptied (returns null). */
+export function MoneyField({
+  cents,
+  onChange,
+  nullable = false,
+  placeholder,
+}: {
+  cents: number | null;
+  onChange: (c: number | null) => void;
+  nullable?: boolean;
+  placeholder?: string;
+}) {
+  const fmt = (c: number | null) => (c === null ? "" : (c / 100).toFixed(2));
+  const [text, setText] = useState(fmt(cents));
+  useEffect(() => setText(fmt(cents)), [cents]);
+  const commit = () => {
+    if (nullable && text.trim() === "") return onChange(null);
+    const v = parseMoneyLoose(text);
+    if (v === null || v < 0) setText(fmt(cents));
+    else onChange(v);
+  };
+  return (
+    <TextInput
+      inputMode="decimal"
+      value={text}
+      placeholder={placeholder}
+      onChange={(e) => setText(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+      dir="ltr"
+    />
+  );
+}
+
+function parseMoneyLoose(s: string): number | null {
+  const t = s.trim().replace(/\s/g, "").replace(",", ".");
+  if (!/^\d+(\.\d{0,2})?$/.test(t)) return null;
+  const [i, f = ""] = t.split(".");
+  return parseInt(i, 10) * 100 + parseInt((f + "00").slice(0, 2), 10);
+}
+
+/** Resize an uploaded image to a small data URL so the DB and the network stay light. */
+export async function shrinkImage(file: File, max: number, type: "image/png" | "image/jpeg" = "image/jpeg"): Promise<string> {
+  const bmp = await createImageBitmap(file);
+  const scale = Math.min(1, max / Math.max(bmp.width, bmp.height));
+  const c = document.createElement("canvas");
+  c.width = Math.round(bmp.width * scale);
+  c.height = Math.round(bmp.height * scale);
+  const ctx = c.getContext("2d")!;
+  if (type === "image/jpeg") {
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, c.width, c.height);
+  }
+  ctx.drawImage(bmp, 0, 0, c.width, c.height);
+  return c.toDataURL(type, 0.82);
+}
+
+export function Tabs<T extends string>({ value, onChange, tabs }: { value: T; onChange: (t: T) => void; tabs: { id: T; label: string }[] }) {
+  return (
+    <div className="flex gap-2 overflow-x-auto">
+      {tabs.map((t) => (
+        <button
+          key={t.id}
+          onClick={() => onChange(t.id)}
+          className={`min-h-12 shrink-0 rounded-xl px-4 font-medium ${value === t.id ? "bg-brand text-stone-950" : "panel-2 border line"}`}
+        >
+          {t.label}
+        </button>
+      ))}
+    </div>
+  );
 }

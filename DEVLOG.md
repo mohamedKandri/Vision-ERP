@@ -95,3 +95,81 @@ Each phase records what was **verified** (by a test or by running the app) and w
   to someone else. Login picks the user tile first, so duplicates are harmless. A manager
   override takes the first matching manager.
 - Daily automatic backup is only a setting so far. The backup itself is Phase 9.
+
+## Phase 2: menu, products, modifiers, combos (2026-11-13)
+
+### Built
+- Migration `0002_menu`:
+  - Tables: stations (grill, fryer, drinks, assembly), categories (color and icon),
+    products (kind simple/combo, price, happy-hour price, tax, station, photo, active,
+    available/86), product_variants, modifier_groups (min/max), modifier_options
+    (choice/extra/remove, price, max qty, default), product_modifier_groups, combo_slots,
+    combo_slot_options (product, optional variant, extra price, default).
+  - Names are stored as `{"fr","ar","en"}` JSON. French is required; the others fall back to French.
+- `db::atomic()`: a nestable transaction guard on SAVEPOINT. It rolls back on early return or
+  error, and every write path now uses it. (Phase 1's `settings::set_many` workaround is gone.)
+- `menu.rs` (Rust) validates:
+  - names, price range, existing category/tax/station, and photo (data: URL, ≤ 400 KB);
+  - min ≤ max and a reachable minimum; "remove" options must be free;
+  - combo rules: slots needed, one default per slot, no nested combos, a variant must belong
+    to its product, and a product can't switch between simple and combo.
+- Everything is soft-deleted (inactive), and variant/option ids stay stable, so past orders
+  stay readable.
+- Audit: product created/updated, **product.price_changed with before/after prices** (only when
+  a price actually changes), category and modifier group saves, 86 / back in stock.
+- Permissions: editing the menu needs `menu.manage`. The **86 toggle** is also open to `pos.sell`
+  and `kds.use`, so a cashier or the kitchen can mark an item out of stock during service.
+- Demo menu (`seed.rs`), optional at setup or with a "Load demo menu" button when the menu is
+  empty. Every name is in FR/AR/EN:
+  - 6 categories; **10 burgers**, most with Simple/Double/Triple variants;
+  - 5 sides (fries in 3 sizes), 8 drinks, 4 desserts, 5 sauces;
+  - 6 modifier groups: doneness, extras, remove, free sauces, combo size Maxi +10, milkshake flavour;
+  - **4 combos** (burger + side + drink, with paid upgrades).
+- `src/lib/menu.ts` (pure logic):
+  - happy-hour window (can cross midnight) and base price with happy hour per product/variant;
+  - default configuration and full validation (min/max, per-option qty, inactive options,
+    options from another product, variants, combo slot choices, 86'd items);
+  - radio vs multi-select toggling, unit price (combo + size + slot extras + paid extras on
+    parts), and description lines for cart and kitchen tickets.
+- UI:
+  - **Menu** screen: products with category filter, search, reorder and preview; product editor
+    with variants, modifier groups, combo slots, photo, and a live HT/VAT split under the price.
+    Also categories and modifier groups.
+  - **Ruptures (86)** board.
+  - **Item configurator** popup. The POS reuses it in Phase 3.
+  - Happy-hour section in Settings.
+
+### Verified
+- **Rust: 38 tests pass**:
+  - Phase 1 tests, plus nested atomic rollback.
+  - Name, category and group validation; product round-trip with variants and groups.
+  - Stable variant ids with deactivation; price-change audit only on a real change; combo rules.
+  - 86 and reorder; unknown references rejected.
+  - Demo seed (6 categories, 10 burgers, 4 combos, AR+EN everywhere, a default in every slot).
+  - API permissions: the cashier can't edit the menu, the kitchen can 86.
+- **Vitest: 69 tests pass**: Phase 1 tests, plus names fallback, happy hour (day window,
+  midnight crossing, disabled), HH price per variant, defaults, min/max/per-option errors,
+  inactive or foreign options, 86, radio vs multi toggling, unit prices for simple and combo,
+  and describe lines.
+- `tsc` is clean and `vite build` succeeds.
+- **End-to-end on the real app** (dev build, Playwright over the WebView2 DevTools port, fresh
+  database). All checks below pass:
+  - setup with demo staff and menu shows 36 products;
+  - Classic Double + 2 cheese + no onion = **70,00 DH**;
+  - Menu Classic + Maxi + Potatoes = **78,00 DH**;
+  - changing a price writes `product.price_changed` with the old and new price;
+  - a new category and product with an Arabic name save;
+  - a group with min > max is refused by the server;
+  - the cashier sees Ruptures but not Menu, and can mark Frites "Épuisé";
+  - Arabic product names and statuses show on the 86 board;
+  - no console errors.
+- **Bug found and fixed by the E2E run:** new products defaulted to the first tax in the list
+  (Exonéré 0 %) instead of the shop's default tax. They now use `default_tax_id`. Re-checked:
+  40 DH shows "36,36 HT + 3,64 TVA".
+
+### Not verified / known issues
+- The Android APK has not been rebuilt for Phase 2, and nothing has run on a tablet yet.
+- Photos are stored as JPEG data URLs (≤ 320 px) in SQLite. That's fine for a menu of this
+  size; Phase 5 sync will need to send them efficiently.
+- Recipes per product and modifier (stock) come in Phase 6. Price variants have no recipe link yet.
+- Reorder arrows only show when a single category is selected, which is intentional.

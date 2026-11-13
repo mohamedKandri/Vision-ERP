@@ -12,7 +12,8 @@ type FieldDef =
   | { key: string; type: "percent" }
   | { key: string; type: "enum"; options: { value: string; label: Key | string }[] }
   | { key: string; type: "tax" }
-  | { key: string; type: "logo" };
+  | { key: string; type: "logo" }
+  | { key: string; type: "time" };
 
 const SECTIONS: { title: Key; fields: FieldDef[] }[] = [
   {
@@ -50,6 +51,14 @@ const SECTIONS: { title: Key; fields: FieldDef[] }[] = [
       { key: "delivery_fee_cents", type: "money" },
       { key: "stock_restore_on_void", type: "bool" },
       { key: "auto_86_on_stockout", type: "bool" },
+    ],
+  },
+  {
+    title: "section_happy_hour",
+    fields: [
+      { key: "happy_hour_enabled", type: "bool" },
+      { key: "happy_hour_start_min", type: "time" },
+      { key: "happy_hour_end_min", type: "time" },
     ],
   },
   {
@@ -175,6 +184,23 @@ export function SettingsScreen({ canEdit, onSaved }: { canEdit: boolean; onSaved
             <Select<number> value={Number(v)} onChange={(x) => set(f.key, x)} options={taxes.filter((x) => x.active).map((x) => ({ value: x.id, label: x.name }))} />
           </Field>
         );
+      case "time": {
+        const m = Number(v ?? 0);
+        const hhmm = `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+        return (
+          <Field key={f.key} label={label(f.key)}>
+            <TextInput
+              type="time"
+              dir="ltr"
+              value={hhmm}
+              onChange={(e) => {
+                const [h, mi] = e.target.value.split(":").map(Number);
+                if (Number.isFinite(h) && Number.isFinite(mi)) set(f.key, h * 60 + mi);
+              }}
+            />
+          </Field>
+        );
+      }
       case "logo":
         return (
           <Field key={f.key} label={label(f.key)}>
@@ -228,7 +254,7 @@ export function SettingsScreen({ canEdit, onSaved }: { canEdit: boolean; onSaved
   );
 }
 
-/** Resize an uploaded logo to a small PNG data URL so receipts and the DB stay light. */
+/** (moved) */
 async function shrinkImage(file: File, max: number): Promise<string> {
   const bmp = await createImageBitmap(file);
   const scale = Math.min(1, max / Math.max(bmp.width, bmp.height));

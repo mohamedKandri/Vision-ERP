@@ -35,6 +35,10 @@ const KEYS: &[(&str, Kind)] = &[
     ("order_type_takeaway", Kind::Bool),
     ("order_type_delivery", Kind::Bool),
     ("delivery_fee_cents", Kind::Int { min: 0, max: 100_000 }),
+    ("happy_hour_enabled", Kind::Bool),
+    // Minutes since midnight, local time. start > end means the window crosses midnight.
+    ("happy_hour_start_min", Kind::Int { min: 0, max: 1439 }),
+    ("happy_hour_end_min", Kind::Int { min: 0, max: 1439 }),
     ("kds_warn_minutes", Kind::Int { min: 1, max: 120 }),
     ("kds_late_minutes", Kind::Int { min: 1, max: 240 }),
     ("loyalty_mode", Kind::Enum(&["none", "stamps", "points"])),
@@ -70,6 +74,9 @@ pub fn defaults() -> Map<String, Value> {
         "order_type_takeaway": true,
         "order_type_delivery": true,
         "delivery_fee_cents": 1000,
+        "happy_hour_enabled": false,
+        "happy_hour_start_min": 900,
+        "happy_hour_end_min": 1080,
         "kds_warn_minutes": 5,
         "kds_late_minutes": 10,
         "loyalty_mode": "none",
@@ -131,32 +138,20 @@ pub fn set_many(conn: &Connection, values: &Map<String, Value>) -> ApiResult<Vec
         check(k, v)?;
     }
     let current = get_all(conn)?;
-    // SAVEPOINT nests safely inside a caller's transaction (e.g. first-run setup).
-    conn.execute_batch("SAVEPOINT settings_set")?;
+    let tx = crate::db::atomic(conn)?;
     let mut changed = Vec::new();
-    let result = (|| -> ApiResult<()> {
-        for (k, v) in values {
-            if current.get(k) != Some(v) {
-                conn.execute(
-                    "INSERT INTO settings (key, value) VALUES (?1, ?2)
-                     ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                    params![k, v.to_string()],
-                )?;
-                changed.push(k.clone());
-            }
-        }
-        Ok(())
-    })();
-    match result {
-        Ok(()) => {
-            conn.execute_batch("RELEASE settings_set")?;
-            Ok(changed)
-        }
-        Err(e) => {
-            conn.execute_batch("ROLLBACK TO settings_set; RELEASE settings_set")?;
-            Err(e)
+    for (k, v) in values {
+        if current.get(k) != Some(v) {
+            tx.execute(
+                "INSERT INTO settings (key, value) VALUES (?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![k, v.to_string()],
+            )?;
+            changed.push(k.clone());
         }
     }
+    tx.commit()?;
+    Ok(changed)
 }
 
 #[cfg(test)]
