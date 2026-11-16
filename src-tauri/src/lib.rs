@@ -14,6 +14,7 @@ pub mod menu;
 pub mod orders;
 pub mod pricing;
 pub mod printing;
+pub mod purchasing;
 pub mod seed;
 pub mod server;
 pub mod settings;

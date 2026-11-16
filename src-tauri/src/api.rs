@@ -922,6 +922,66 @@ pub fn dispatch(core: &Core, token: Option<&str>, method: &str, params: Value) -
             Ok(Value::Null)
         }
 
+        // ---------------------------------------------------------- purchasing
+        "suppliers.list" => {
+            require_any(&me, &["purchasing.manage", "inventory.manage"])?;
+            crate::purchasing::list_suppliers(&conn)
+        }
+        "suppliers.save" => {
+            require(&me, "purchasing.manage")?;
+            Ok(json!({ "id": crate::purchasing::save_supplier(&conn, &me, p(params)?)? }))
+        }
+        "purchases.list" => {
+            require_any(&me, &["purchasing.manage", "inventory.manage"])?;
+            #[derive(Deserialize, Default)]
+            struct P {
+                status: Option<String>,
+            }
+            let P { status } = if params.is_null() { P::default() } else { p(params)? };
+            crate::purchasing::list_pos(&conn, status)
+        }
+        "purchases.get" => {
+            require_any(&me, &["purchasing.manage", "inventory.manage"])?;
+            crate::purchasing::get_po(&conn, p::<IdP>(params)?.id)
+        }
+        "purchases.save" => {
+            require(&me, "purchasing.manage")?;
+            Ok(json!({ "id": crate::purchasing::save_po(&conn, &me, p(params)?)? }))
+        }
+        "purchases.order" => {
+            require(&me, "purchasing.manage")?;
+            crate::purchasing::order_po(&conn, &me, p::<IdP>(params)?.id)?;
+            Ok(Value::Null)
+        }
+        "purchases.receive" => {
+            // Whoever manages stock can take a delivery.
+            require_any(&me, &["purchasing.manage", "inventory.manage"])?;
+            crate::purchasing::receive(&conn, &me, p(params)?)
+        }
+        "purchases.close" => {
+            require(&me, "purchasing.manage")?;
+            crate::purchasing::close_po(&conn, &me, p::<IdP>(params)?.id)?;
+            Ok(Value::Null)
+        }
+        "purchases.cancel" => {
+            require(&me, "purchasing.manage")?;
+            crate::purchasing::cancel_po(&conn, &me, p::<IdP>(params)?.id)?;
+            Ok(Value::Null)
+        }
+        "purchases.suggestions" => {
+            require(&me, "purchasing.manage")?;
+            crate::purchasing::suggestions(&conn)
+        }
+        "purchases.from_suggestions" => {
+            require(&me, "purchasing.manage")?;
+            #[derive(Deserialize)]
+            struct P {
+                picks: Vec<crate::purchasing::SuggestedIn>,
+            }
+            let P { picks } = p(params)?;
+            Ok(json!({ "ids": crate::purchasing::create_from_suggestions(&conn, &me, picks)? }))
+        }
+
         "audit.list" => {
             require(&me, "audit.view")?;
             #[derive(Deserialize)]

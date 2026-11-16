@@ -1,5 +1,5 @@
 import FloorScreen from "./screens/FloorScreen";
-import { Ban, Banknote, Boxes, ChefHat, LayoutDashboard, LayoutGrid, Printer, Search, Wifi, History, Lock, Percent, Settings as Cog, ShieldCheck, ShoppingCart, User, Users, UtensilsCrossed } from "lucide-react";
+import { Ban, Banknote, Boxes, Truck, ChefHat, LayoutDashboard, LayoutGrid, Printer, Search, Wifi, History, Lock, Percent, Settings as Cog, ShieldCheck, ShoppingCart, User, Users, UtensilsCrossed } from "lucide-react";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { applyLang, errorText, LangContext, translate, useT, type Key } from "./i18n";
 import { rpc, setToken, type Lang, type SessionUser, type Settings } from "./lib/rpc";
@@ -15,6 +15,7 @@ import { PrintersScreen } from "./screens/PrintersScreen";
 import { AvailabilityScreen, MenuScreen } from "./screens/MenuScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { StockScreen } from "./screens/StockScreen";
+import { PurchasesScreen } from "./screens/PurchasesScreen";
 import { Setup } from "./screens/Setup";
 
 interface Status {
@@ -24,7 +25,7 @@ interface Status {
   version: string;
 }
 
-type Page = "pos" | "floor" | "cash" | "kitchen" | "device" | "menu" | "printers" | "86" | "stock" | "settings" | "taxes" | "users" | "permissions" | "audit" | "me";
+type Page = "pos" | "floor" | "cash" | "kitchen" | "device" | "menu" | "printers" | "86" | "stock" | "purchases" | "settings" | "taxes" | "users" | "permissions" | "audit" | "me";
 
 const NAV: { page: Page; label: Key; icon: ReactNode; perm?: string | string[]; phase?: number; color?: string }[] = [
   { page: "pos", label: "nav_pos", icon: <ShoppingCart />, perm: "pos.sell", color: "#1D4ED8" },
@@ -33,6 +34,7 @@ const NAV: { page: Page; label: Key; icon: ReactNode; perm?: string | string[]; 
   { page: "kitchen", label: "nav_kitchen", icon: <ChefHat />, perm: "kds.use", color: "#B45309" },
   { page: "86", label: "nav_86", icon: <Ban />, perm: ["menu.manage", "pos.sell", "kds.use"], color: "#B91C1C" },
   { page: "stock", label: "nav_stock", icon: <Boxes />, perm: ["inventory.manage", "kds.use"], color: "#A16207" },
+  { page: "purchases", label: "nav_purchases", icon: <Truck />, perm: ["purchasing.manage", "inventory.manage"], color: "#0F766E" },
   { page: "menu", label: "nav_menu", icon: <UtensilsCrossed />, perm: "menu.manage", color: "#7C3AED" },
   { page: "settings", label: "nav_settings", icon: <Cog />, perm: "settings.manage", color: "#374151" },
   { page: "printers", label: "nav_printers", icon: <Printer />, perm: "settings.manage", color: "#0E7490" },
@@ -178,6 +180,9 @@ function Shell({
         break;
       case "menu":
         body = <MenuScreen />;
+        break;
+      case "purchases":
+        body = <PurchasesScreen me={user} />;
         break;
       case "stock":
         body = <StockScreen me={user} />;

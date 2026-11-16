@@ -141,6 +141,21 @@ In Appareil on the Host, **Retirer** disconnects a lost or stolen device.
   the differences, then **Validate**. Only the lines you typed are corrected.
 - **Movements**: every change, with who, why, the order number and the value.
 
+## Purchasing (Achats)
+
+**Achats** (managers):
+- **Suppliers**: name, phone, and what each supplier sells, by pack (for example "Sachet 5 kg"
+  of beef at 450,00 excl. VAT). Tick **Preferred** for the supplier to suggest first.
+- **To order**: every ingredient at or under its minimum, with the packs needed to get back
+  to twice the minimum (minus what is already on order). Untick what you don't want, change
+  the packs, then **Create purchase orders**: one draft per supplier.
+- **Purchase orders**: create or edit a draft, then **Place order**. When the delivery
+  arrives, tap **Receive goods**. Enter what really came (part of it is fine), change the pack
+  price if the invoice differs, and add the delivery-note number. Stock goes up, and the
+  ingredient's cost becomes the average of the stock on hand and the delivery.
+  **Close** an order that won't be completed; **Cancel** one nothing was received for.
+  Each delivery appears in Stock → Movements as "Réception · BC-n".
+
 ## Printers
 
 **Imprimantes** (Owner): **Ajouter une imprimante**, choose the type, then **Test**.
@@ -199,5 +214,6 @@ adb install -r release/burger-os-0.1.0-arm64-test.apk
 - `src-tauri/src/api.rs`: the single RPC dispatcher. The webview calls `rpc(method, params)`.
   In Phase 5 the LAN server calls the same function, so auth and permissions live in one place.
 - `src-tauri/migrations/`: forward-only SQL migrations.
+- `src-tauri/src/purchasing.rs` + `src/lib/purchasing.ts`: suppliers, purchase orders, goods receipts (weighted average cost), suggestions.
 - `src-tauri/src/stock.rs` + `src/lib/stock.ts`: stock quantities (thousandths of a unit), recipes, food cost; automatic deduction from orders.
 - Debug builds read `BURGER_OS_DATA_DIR` to use another data folder, so you can test on a throwaway database. Release builds ignore it.

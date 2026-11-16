@@ -602,3 +602,96 @@ Each phase records what was **verified** (by a test or by running the app) and w
 - Your dev app restarted during this phase and ran migration 9 on your own "test" database.
   The migration only adds empty tables and two columns: no data was changed and no
   ingredients were added there. "Load demo ingredients and recipes" in Stock adds them.
+
+## Phase 7: suppliers and purchase orders (2026-11-16)
+
+### Built
+- Migration `0010_purchasing`:
+  - `suppliers` (name, phone, email, address, note, active);
+  - `supplier_items`: what a supplier sells, as a pack ("Sachet 5 kg") with its last price,
+    and one **preferred** supplier per ingredient (unique partial index);
+  - `purchase_orders` + `purchase_order_lines` (number BC-n from a sequence);
+  - `purchase_receipts` + `purchase_receipt_lines`;
+  - `stock_moves.po_id`.
+- `purchasing.rs`:
+  - Pure functions: cost per kg / L / piece of a delivery, **weighted average cost**, value
+    of a partial pack, order status, packs to suggest.
+  - Order flow: draft (editable) → ordered (locked) → partially received → closed.
+    Cancel works while nothing has been received; after that, "Close" ends the order and
+    the rest is no longer expected.
+  - **Goods receipt** (all or part of an order, at the real price if it changed):
+    - adds `purchase` stock moves valued at what was paid, with the reason "BC-n";
+    - sets the cost to the weighted average of the stock on hand and the delivery (the
+      delivery price when stock is 0 or negative);
+    - remembers the supplier's new pack price;
+    - updates the order status; can bring auto-86'd products back; audited.
+  - **Suggestions**: active ingredients at or under their minimum.
+    - Target: twice the minimum, in whole packs, minus what is already on order (drafts
+      included).
+    - Supplier: the preferred one, else the cheapest per unit.
+    - "Create purchase orders" makes one draft per supplier.
+  - Demo: 4 suppliers (butcher, bakery, greengrocer, wholesaler) with packs and prices for
+    the demo ingredients. Seeded together with the demo stock.
+- API:
+  - `suppliers.list/save`;
+  - `purchases.list/get/save/order/receive/close/cancel/suggestions/from_suggestions`;
+  - live topic `stock`.
+  - Permissions: `purchasing.manage` for everything. `inventory.manage` can also see orders
+    and receive goods.
+- UI: **Achats / Purchasing** app.
+  - **Purchase orders**:
+    - open / all lists;
+    - editor: the supplier's items first; pack, size, packs, price, total;
+    - detail with status, ordered and received per line, and the receipts;
+    - receipt dialog: prefilled with what is still expected, price editable with the new
+      cost per unit, delivery-note number.
+  - **To order**: the suggestions, with editable packs and a total.
+  - **Suppliers**: cards and an editor with their items and the preferred flag.
+  - French, English and Arabic. Stock → Movements shows "Réception · BC-n".
+
+### Verified
+- **Rust: 111 tests pass** (5 new):
+  - pure rules: 10 kg for 900 → 90/kg; average 5 kg at 90 + 5 kg at 100 → 95; zero or
+    negative stock takes the new price; 100 buns at 2.50 + 24 at 2.75 → 2.55;
+    partial-pack value and rounding; status; suggested packs (whole packs, minimum
+    reached, already on order);
+  - full flow on the demo data:
+    - 4 × 5 kg of beef ordered, so a draft can't be received;
+    - once ordered it can't be edited;
+    - 10 kg received at 500/5 kg → partial, stock 30 kg, cost (20×90 + 10×100)/30 =
+      93.33, supplier price updated;
+    - the rest received at the ordered price → closed;
+    - moves of 1000.00 and 900.00 linked to BC-1; ledger = cache;
+  - close / cancel / validation: bad date, unknown supplier, empty order, cancel after a
+    receipt refused (close works), a line from another order refused, "open" filter;
+  - suggestions:
+    - 30 buns (minimum 40) → 3 packs of 24 from the bakery;
+    - a new preferred supplier takes over, with only one preferred kept;
+    - once on order, buns are no longer suggested;
+    - a supplier that doesn't sell the item is refused;
+  - supplier validation;
+  - API: the cashier can't see purchasing; setup with the demo menu seeds 4 suppliers;
+    save → order → full receipt = closed; topics.
+- **Vitest: 93 pass** (3 new in `purchasing.test.ts`, same numbers as Rust). `tsc` clean.
+- **The real app, driven by a script, on a throwaway database** (`BURGER_OS_DATA_DIR`): 22
+  checks pass, no page errors.
+  - Suggestion: 30 buns → bakery, 3 packs = 180.00. The draft is created and opened.
+  - Order placed. The receipt is prefilled with 72 buns. Receiving 48 at 66.00 per pack
+    shows 132.00 and 2.75 per bun.
+  - After the receipt: partial, the delivery note is listed, stock 78, cost 2.65. Then
+    closed, and listed under All.
+  - New supplier "Laiterie Atlas" with a preferred 6 L milk pack. In a new order its item
+    comes first; 5 packs = 240.00; saved as draft BC-2.
+  - Stock → Movements shows "+48 pce · Réception · BC-1 · 132.00".
+  - The kitchen user has no Purchasing app. Arabic is right-to-left.
+
+### Not verified / known issues
+- Not tried on a tablet by touch; the APK was not rebuilt (no Android-only code changed).
+- Purchase orders can't be printed or sent to the supplier yet (they're read out or copied
+  by hand). PDF/CSV export comes in Phase 8.
+- A closed order's total is the ordered amount; the received amount shows on its detail.
+- Purchase VAT isn't tracked: prices are entered excluding VAT.
+- Your dev build was rebuilt with migration 10 during this phase. If your app was started
+  afterwards, it added the empty purchasing tables to your test database (no data
+  changed). Demo suppliers are only added together with the demo ingredients ("Load demo
+  ingredients and recipes" in Stock).

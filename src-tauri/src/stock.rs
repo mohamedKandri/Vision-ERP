@@ -176,11 +176,14 @@ pub struct Move<'a> {
     pub count_id: Option<i64>,
     pub product_id: Option<i64>,
     pub user_id: Option<i64>,
+    pub po_id: Option<i64>,
+    /// Value to record instead of the current cost (goods received at their real price).
+    pub value_cents: Option<i64>,
 }
 
 impl<'a> Move<'a> {
     pub fn new(ingredient_id: i64, delta_milli: i64, kind: &'a str) -> Self {
-        Self { ingredient_id, delta_milli, kind, reason: "", order_id: None, order_line_id: None, count_id: None, product_id: None, user_id: None }
+        Self { ingredient_id, delta_milli, kind, reason: "", order_id: None, order_line_id: None, count_id: None, product_id: None, user_id: None, po_id: None, value_cents: None }
     }
 }
 
@@ -193,11 +196,11 @@ pub fn record(conn: &Connection, m: &Move) -> ApiResult<i64> {
         .query_row("SELECT unit, cost_cents FROM ingredients WHERE id=?1", [m.ingredient_id], |r| Ok((r.get(0)?, r.get(1)?)))
         .optional()?
         .ok_or_else(|| ApiError::not_found("ingredient"))?;
-    let value = mc_to_cents(value_mc(&unit, cost, m.delta_milli));
+    let value = m.value_cents.unwrap_or_else(|| mc_to_cents(value_mc(&unit, cost, m.delta_milli)));
     conn.execute(
-        "INSERT INTO stock_moves (ingredient_id, delta_milli, kind, reason, value_cents, order_id, order_line_id, count_id, product_id, user_id)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
-        params![m.ingredient_id, m.delta_milli, m.kind, m.reason, value, m.order_id, m.order_line_id, m.count_id, m.product_id, m.user_id],
+        "INSERT INTO stock_moves (ingredient_id, delta_milli, kind, reason, value_cents, order_id, order_line_id, count_id, product_id, user_id, po_id)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+        params![m.ingredient_id, m.delta_milli, m.kind, m.reason, value, m.order_id, m.order_line_id, m.count_id, m.product_id, m.user_id, m.po_id],
     )?;
     conn.execute(
         "UPDATE ingredients SET stock_milli = stock_milli + ?2, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?1",
@@ -719,8 +722,9 @@ pub fn history(conn: &Connection, h: HistoryIn) -> ApiResult<Value> {
     let rows = conn
         .prepare(
             "SELECT m.id, m.at, m.ingredient_id, i.names, i.unit, m.delta_milli, m.kind, m.reason, m.value_cents,
-               m.order_id, o.number, m.count_id, m.product_id, p.names, u.name
+               m.order_id, o.number, m.count_id, m.product_id, p.names, u.name, po.number
              FROM stock_moves m JOIN ingredients i ON i.id = m.ingredient_id
+             LEFT JOIN purchase_orders po ON po.id = m.po_id
              LEFT JOIN orders o ON o.id = m.order_id
              LEFT JOIN products p ON p.id = m.product_id
              LEFT JOIN users u ON u.id = m.user_id
@@ -734,7 +738,7 @@ pub fn history(conn: &Connection, h: HistoryIn) -> ApiResult<Value> {
                 "kind": r.get::<_, String>(6)?, "reason": r.get::<_, String>(7)?, "value_cents": r.get::<_, i64>(8)?,
                 "order_id": r.get::<_, Option<i64>>(9)?, "order_number": r.get::<_, Option<i64>>(10)?,
                 "count_id": r.get::<_, Option<i64>>(11)?, "product_id": r.get::<_, Option<i64>>(12)?,
-                "product_names": r.get::<_, Option<String>>(13)?.map(names_of), "user_name": r.get::<_, Option<String>>(14)?,
+                "product_names": r.get::<_, Option<String>>(13)?.map(names_of), "user_name": r.get::<_, Option<String>>(14)?, "po_number": r.get::<_, Option<i64>>(15)?,
             }))
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -1074,6 +1078,7 @@ pub fn seed_demo(conn: &Connection, user_id: i64) -> ApiResult<bool> {
             put("option_id", oid, *lines)?;
         }
     }
+    crate::purchasing::seed_demo(&tx)?;
     audit::log(&tx, Some(user_id), "stock.seed_demo", None, None, Some(json!({"ingredients": ings.len()})))?;
     tx.commit()?;
     Ok(true)

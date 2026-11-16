@@ -46,7 +46,7 @@ function useIngredients() {
 }
 
 /** Text field holding a quantity in the ingredient's unit; reports milli-units (or null when empty/invalid). */
-function QtyField({ milli, onChange, unit, allowNegative, autoFocus, placeholder }: {
+export function QtyField({ milli, onChange, unit, allowNegative, autoFocus, placeholder }: {
   milli: number | null; onChange: (m: number | null) => void; unit: Unit; allowNegative?: boolean; autoFocus?: boolean; placeholder?: string;
 }) {
   const t = useT();
