@@ -727,6 +727,11 @@ pub fn dispatch(core: &Core, token: Option<&str>, method: &str, params: Value) -
             let id = crate::floors::save_table(&conn, &me, p(params)?)?;
             Ok(json!({ "id": id }))
         }
+        "tables.delete" => {
+            require(&me, "settings.manage")?;
+            crate::floors::delete_table(&conn, &me, p::<IdP>(params)?.id)?;
+            Ok(Value::Null)
+        }
         "tables.save_floor" => {
             require(&me, "settings.manage")?;
             let id = crate::floors::save_floor(&conn, &me, p(params)?)?;

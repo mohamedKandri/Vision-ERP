@@ -8,7 +8,8 @@ import { rpc } from "../lib/rpc";
 
 type TableEdit = Omit<PlanTable, "id" | "orders"> & { id: number | null };
 
-export default function FloorScreen() {
+/** `onDone`: shown inside the Caisse, with a button back to service. */
+export default function FloorScreen({ onDone }: { onDone?: () => void } = {}) {
   const t = useT();
   const toast = useToast();
   const { plan, setPlan, error, reload } = usePlan();
@@ -66,6 +67,17 @@ export default function FloorScreen() {
     }
   };
 
+  const deleteTable = async () => {
+    if (!sel?.id || !confirm(t("fl_delete_table_q", { name: sel.name }))) return;
+    try {
+      await rpc("tables.delete", { id: sel.id });
+      setSel(null);
+      reload();
+    } catch (e) {
+      fail(e);
+    }
+  };
+
   const saveFloor = async () => {
     if (!floorEdit) return;
     try {
@@ -95,6 +107,7 @@ export default function FloorScreen() {
         title={t("nav_floor")}
         actions={
           <div className="flex flex-wrap gap-2">
+            {onDone && <Button onClick={() => { if (!dirty || confirm(t("fl_unsaved"))) onDone(); }}>{t("fl_done")}</Button>}
             <Button onClick={() => setFloorEdit({ name: "" })}><Plus className="h-4 w-4" /> {t("fl_add_floor")}</Button>
             {floor && <Button onClick={() => setFloorEdit(floor)}>{t("fl_edit_floor")}</Button>}
             {floor && (
@@ -156,9 +169,12 @@ export default function FloorScreen() {
             </Field>
           </div>
           <div className="mt-3"><Toggle checked={sel.active} onChange={(v) => setSel({ ...sel, active: v })} label={t("active")} /></div>
-          <div className="mt-5 flex justify-end gap-2">
-            <Button onClick={() => setSel(null)}>{t("cancel")}</Button>
-            <Button variant="primary" onClick={saveTable}>{t("save")}</Button>
+          <div className="mt-5 flex justify-between gap-2">
+            {sel.id ? <Button onClick={deleteTable}><Trash2 className="h-4 w-4" /> {t("fl_delete_table")}</Button> : <span />}
+            <div className="flex gap-2">
+              <Button onClick={() => setSel(null)}>{t("cancel")}</Button>
+              <Button variant="primary" onClick={saveTable}>{t("save")}</Button>
+            </div>
           </div>
         </Modal>
       )}

@@ -207,7 +207,7 @@ export function StateLegend() {
   const t = useT();
   return (
     <div className="muted flex flex-wrap gap-3 text-xs">
-      {(["free", "open", "ready", "paid"] as TableState[]).map((s) => (
+      {(["free", "open", "ready"] as TableState[]).map((s) => (
         <span key={s} className="flex items-center gap-1">
           <span className={`inline-block h-3 w-3 rounded-sm border ${STATE_CLS[s]}`} /> {t(`fl_state_${s}`)}
         </span>

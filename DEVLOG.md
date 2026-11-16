@@ -478,3 +478,6 @@ Each phase records what was **verified** (by a test or by running the app) and w
 - Verified: Rust 95 tests pass (3 new floor tests), typecheck, Vitest 83 pass.
 - Not verified: the screens by eye / by touch (drag on a real tablet), RTL layout of the board.
 - Caisse now opens on the floor plan (when tables exist): tap a free table to start its order, a busy one to open it, or Takeaway / Delivery. "Tables" button on the till goes back; finishing or starting a new order returns to the plan. Typecheck + Vitest 83 pass; not checked by eye.
+- A table is free again as soon as its orders are paid (encaissé), even while the kitchen still serves; the "paid" colour is gone.
+- Caisse floor screen: "Edit plan" (managers, `settings.manage`) opens the editor in place: drag tables, add / edit / delete tables and floors, "Done" returns to service. Delete removes a never-used table, or takes a used one off the floor and keeps it for order history; refused while an order is open on it.
+- Verified: floor Rust tests (3) pass incl. paid-frees-table and delete rules; typecheck; Vitest 83. Not checked by eye.

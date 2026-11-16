@@ -1,5 +1,6 @@
 import { LayoutDashboard, Bell, ChefHat, ClipboardList, Minus, Pause, Percent, Plus, Receipt, Scissors, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import FloorScreen from "./FloorScreen";
 import { ItemConfigurator } from "../components/ItemConfigurator";
 import { PaymentDialog, ReasonDialog, ReceiptView, useApproval } from "../components/PosDialogs";
 import { Button, Field, Modal, MoneyField, TextInput, useToast } from "../components/ui";
@@ -294,6 +295,7 @@ export function PosScreen({ me }: { me: SessionUser }) {
       <div className="flex h-full min-h-0 flex-col">
         <PrintProblems />
         <FloorHome
+          canEdit={me.permissions.includes("settings.manage")}
           onTakeaway={() => startOrder("takeaway")}
           onDelivery={() => startOrder("delivery")}
           onTable={async (tb) => {
@@ -889,18 +891,21 @@ function TablePicker({ current, moving, onClose, onNone, onPick }: {
 }
 
 /** Start of service: the floor plan with live table status, plus takeaway / delivery shortcuts. */
-function FloorHome({ onTable, onTakeaway, onDelivery }: { onTable: (t: PlanTable) => void; onTakeaway: () => void; onDelivery: () => void }) {
+function FloorHome({ onTable, onTakeaway, onDelivery, canEdit }: { onTable: (t: PlanTable) => void; onTakeaway: () => void; onDelivery: () => void; canEdit: boolean }) {
   const t = useT();
+  const [editing, setEditing] = useState(false);
   const { plan } = usePlan();
   const [floorId, setFloorId] = useState<number | null>(null);
   const floors = plan?.floors.filter((f) => f.active) ?? [];
   const shown = floorId ?? floors[0]?.id ?? null;
+  if (editing) return <div className="min-h-0 flex-1 overflow-auto"><FloorScreen onDone={() => setEditing(false)} /></div>;
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto p-3">
       <div className="flex flex-wrap items-center gap-2">
         <FloorTabs floors={floors} value={shown} onChange={setFloorId} />
         <div className="flex-1" />
         <StateLegend />
+        {canEdit && <button onClick={() => setEditing(true)} className="h-11 rounded-sm border line panel-2 px-4 font-semibold">{t("fl_edit_plan")}</button>}
         <button onClick={onTakeaway} className="h-11 rounded-sm bg-brand px-5 font-semibold text-white">{t("order_type_takeaway")}</button>
         <button onClick={onDelivery} className="h-11 rounded-sm border line panel-2 px-5 font-semibold">{t("order_type_delivery")}</button>
       </div>

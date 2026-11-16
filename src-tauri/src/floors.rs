@@ -18,7 +18,8 @@ use serde_json::{json, Value};
 
 pub const GRID_W: i64 = 24;
 pub const GRID_H: i64 = 16;
-const OPEN: &str = "o.status NOT IN ('closed','voided') AND o.payment_status <> 'refunded'";
+/// A table is busy until its orders are paid (encaissé), even if the kitchen is still serving them.
+const OPEN: &str = "o.status NOT IN ('closed','voided') AND o.payment_status NOT IN ('paid','refunded')";
 
 /// Floors, tables with position, and the open orders on each table (for the floor view).
 pub fn plan(conn: &Connection) -> ApiResult<Value> {
@@ -191,6 +192,26 @@ pub fn save_table(conn: &Connection, me: &SessionUser, t: TableIn) -> ApiResult<
     Ok(id)
 }
 
+/// Remove a table from the plan. Never-used tables are deleted; tables with past orders are
+/// kept for history but taken off the floor (inactive, no floor). Not while an order is open on it.
+pub fn delete_table(conn: &Connection, me: &SessionUser, id: i64) -> ApiResult<()> {
+    let open: i64 = conn.query_row(&format!("SELECT COUNT(*) FROM orders o WHERE o.table_id=?1 AND {OPEN}"), [id], |r| r.get(0))?;
+    if open > 0 {
+        return Err(ApiError::new("conflict", "this table has an open order"));
+    }
+    let used: i64 = conn.query_row("SELECT COUNT(*) FROM orders WHERE table_id=?1", [id], |r| r.get(0))?;
+    let n = if used == 0 {
+        conn.execute("DELETE FROM dining_tables WHERE id=?1", [id])?
+    } else {
+        conn.execute("UPDATE dining_tables SET active=0, floor_id=NULL, name=name || ' #' || id WHERE id=?1", [id])?
+    };
+    if n == 0 {
+        return Err(ApiError::not_found("table"));
+    }
+    audit::log(conn, Some(me.id), "table.deleted", Some("table"), Some(&id.to_string()), Some(json!({"kept_for_history": used > 0})))?;
+    Ok(())
+}
+
 #[derive(Deserialize)]
 pub struct Pos {
     pub id: i64,
@@ -282,8 +303,10 @@ mod tests {
         let find = |id: i64| p["tables"].as_array().unwrap().iter().find(|t| t["id"] == id).unwrap().clone();
         assert!(find(3)["orders"].as_array().unwrap().is_empty());
         assert_eq!(find(5)["orders"][0]["id"], json!(o));
-        // Closed orders do not show; an inactive table can't receive one.
-        c.execute("UPDATE orders SET status='closed', payment_status='paid' WHERE id=?1", [o]).unwrap();
+        // Paid (not yet served) frees the table; closed orders do not show either.
+        c.execute("UPDATE orders SET payment_status='paid' WHERE id=?1", [o]).unwrap();
+        assert!(plan(&c).unwrap()["tables"].as_array().unwrap().iter().all(|t| t["orders"].as_array().unwrap().is_empty()), "paid frees the table");
+        c.execute("UPDATE orders SET status='closed' WHERE id=?1", [o]).unwrap();
         assert!(plan(&c).unwrap()["tables"].as_array().unwrap().iter().all(|t| t["orders"].as_array().unwrap().is_empty()));
         assert!(move_order(&c, &cashier, o, 4).is_err(), "closed order cannot move");
     }
@@ -312,6 +335,15 @@ mod tests {
         assert_ne!(c.query_row("SELECT x FROM dining_tables WHERE id=1", [], |r| r.get::<_, i64>(0)).unwrap(), 5, "rolled back");
         save_layout(&c, &owner, 1, vec![Pos { id: 1, x: 5, y: 5, w: 4, h: 2 }]).unwrap();
         assert!(save_layout(&c, &owner, 2, vec![Pos { id: 1, x: 0, y: 0, w: 3, h: 3 }]).is_err(), "table 1 is not on the terrace");
+        // Delete: used table kept for history (off the floor), unused one removed.
+        delete_table(&c, &owner, id).unwrap();
+        assert_eq!(c.query_row("SELECT floor_id IS NULL AND active=0 FROM dining_tables WHERE id=?1", [id], |r| r.get::<_, bool>(0)).unwrap(), true);
+        let fresh = save_table(&c, &owner, mk(None, "Bar 9", 0, 3)).unwrap();
+        delete_table(&c, &owner, fresh).unwrap();
+        assert!(c.query_row("SELECT 1 FROM dining_tables WHERE id=?1", [fresh], |_| Ok(())).is_err());
+        let busy = dine_in(&c, &cashier, 4);
+        assert!(delete_table(&c, &owner, 4).is_err(), "open order on it");
+        let _ = busy;
         // Floors.
         assert!(delete_floor(&c, &owner, 1).is_err(), "has tables");
         let f = save_floor(&c, &owner, FloorIn { id: None, name: "Étage".into(), sort: 3, active: true }).unwrap();
