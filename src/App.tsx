@@ -1,4 +1,5 @@
-import { Ban, Banknote, ChefHat, LayoutGrid, Printer, Search, Wifi, History, Lock, Percent, Settings as Cog, ShieldCheck, ShoppingCart, User, Users, UtensilsCrossed } from "lucide-react";
+import FloorScreen from "./screens/FloorScreen";
+import { Ban, Banknote, ChefHat, LayoutDashboard, LayoutGrid, Printer, Search, Wifi, History, Lock, Percent, Settings as Cog, ShieldCheck, ShoppingCart, User, Users, UtensilsCrossed } from "lucide-react";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { applyLang, errorText, LangContext, translate, useT, type Key } from "./i18n";
 import { rpc, setToken, type Lang, type SessionUser, type Settings } from "./lib/rpc";
@@ -22,10 +23,11 @@ interface Status {
   version: string;
 }
 
-type Page = "pos" | "cash" | "kitchen" | "device" | "menu" | "printers" | "86" | "settings" | "taxes" | "users" | "permissions" | "audit" | "me";
+type Page = "pos" | "floor" | "cash" | "kitchen" | "device" | "menu" | "printers" | "86" | "settings" | "taxes" | "users" | "permissions" | "audit" | "me";
 
 const NAV: { page: Page; label: Key; icon: ReactNode; perm?: string | string[]; phase?: number; color?: string }[] = [
   { page: "pos", label: "nav_pos", icon: <ShoppingCart />, perm: "pos.sell", color: "#1D4ED8" },
+  { page: "floor", label: "nav_floor", icon: <LayoutDashboard />, perm: "settings.manage", color: "#C2410C" },
   { page: "cash", label: "nav_cash", icon: <Banknote />, perm: ["cash.session", "cash.in_out"], color: "#047857" },
   { page: "kitchen", label: "nav_kitchen", icon: <ChefHat />, perm: "kds.use", color: "#B45309" },
   { page: "86", label: "nav_86", icon: <Ban />, perm: ["menu.manage", "pos.sell", "kds.use"], color: "#B91C1C" },
@@ -165,6 +167,9 @@ function Shell({
     switch (page) {
       case "pos":
         body = <PosScreen me={user} />;
+        break;
+      case "floor":
+        body = <FloorScreen />;
         break;
       case "cash":
         body = <CashScreen me={user} />;

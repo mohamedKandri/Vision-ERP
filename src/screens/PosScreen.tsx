@@ -11,6 +11,7 @@ import { buildReceipt } from "../lib/receipt";
 import { isApiError, rpc, type Lang, type SessionUser, type Settings, type TaxRow } from "../lib/rpc";
 import { device } from "../lib/device";
 import { useLive } from "../lib/live";
+import { FloorBoard, FloorTabs, StateLegend, usePlan, type PlanTable } from "../components/FloorPlan";
 import { PrintProblems } from "./PrintersScreen";
 import { printReceipt, type ReceiptPrinter } from "../lib/print";
 
@@ -498,18 +499,30 @@ export function PosScreen({ me }: { me: SessionUser }) {
       )}
 
       {dialog?.kind === "tables" && (
-        <Modal onClose={() => setDialog(null)}>
-          <h2 className="mb-3 text-xl font-bold">{t("pos_select_table")}</h2>
-          <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
-            <button className="min-h-16 rounded-xl border line panel-2" onClick={() => { setDraft({ ...draft, table_id: null }); setDialog(null); }}>{t("pos_no_table")}</button>
-            {ctx.tables.map((tb) => (
-              <button key={tb.id} onClick={() => { setDraft({ ...draft, table_id: tb.id }); setDialog(null); }}
-                className={`min-h-16 rounded-xl border-2 font-bold ${draft.table_id === tb.id ? "border-brand bg-brand/20" : "line panel-2"}`}>
-                {tb.name}<div className="muted text-xs font-normal">{tb.seats} 👤</div>
-              </button>
-            ))}
-          </div>
-        </Modal>
+        <TablePicker
+          current={draft.table_id}
+          moving={!!order && order.type === "dine_in"}
+          onClose={() => setDialog(null)}
+          onNone={() => { setDraft({ ...draft, table_id: null }); setDialog(null); }}
+          onPick={async (tb) => {
+            if (order && order.type === "dine_in") {
+              // A saved dine-in order: move it to the tapped table.
+              if (tb.id === order.table_id) return setDialog(null);
+              try {
+                await rpc("orders.move_table", { order_id: order.id, table_id: tb.id });
+                await load(order.id);
+              } catch (e) {
+                fail(e);
+              }
+            } else if (!order && !cart.length && tb.orders.length) {
+              // Nothing in progress: open the order already on that table.
+              await load(tb.orders[tb.orders.length - 1].id);
+            } else {
+              setDraft({ ...draft, type: "dine_in", table_id: tb.id });
+              setDialog(null);
+            }
+          }}
+        />
       )}
 
       {dialog?.kind === "hold" && (
@@ -808,6 +821,36 @@ function OpenTillDialog({ onCancel, onOpen }: { onCancel: () => void; onOpen: (f
         <Button onClick={onCancel}>{t("cancel")}</Button>
         <Button variant="primary" onClick={() => onOpen(float ?? 0)}>{t("cash_open")}</Button>
       </div>
+    </Modal>
+  );
+}
+
+/** POS table picker: the live floor plan. Free tables take the new order; busy ones open theirs. */
+function TablePicker({ current, moving, onClose, onNone, onPick }: {
+  current: number | null; moving: boolean; onClose: () => void; onNone: () => void; onPick: (t: PlanTable) => void;
+}) {
+  const t = useT();
+  const { plan } = usePlan();
+  const [floorId, setFloorId] = useState<number | null>(null);
+  const floors = plan?.floors.filter((f) => f.active) ?? [];
+  const shown = floorId ?? plan?.tables.find((x) => x.id === current)?.floor_id ?? floors[0]?.id ?? null;
+  return (
+    <Modal wide onClose={onClose}>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <h2 className="text-xl font-bold">{moving ? t("fl_move_to") : t("pos_select_table")}</h2>
+        {!moving && <button className="h-10 rounded-md border line panel-2 px-4" onClick={onNone}>{t("pos_no_table")}</button>}
+      </div>
+      {!plan ? (
+        <p className="muted">…</p>
+      ) : (
+        <>
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+            <FloorTabs floors={floors} value={shown} onChange={setFloorId} />
+            <StateLegend />
+          </div>
+          <FloorBoard plan={plan} floorId={shown} selectedId={current} onTap={onPick} />
+        </>
+      )}
     </Modal>
   );
 }

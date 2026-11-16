@@ -52,6 +52,14 @@ fn p<T: for<'de> Deserialize<'de>>(params: Value) -> ApiResult<T> {
     Ok(serde_json::from_value(params)?)
 }
 
+fn require_any(user: &SessionUser, perms: &[&str]) -> ApiResult<()> {
+    if perms.iter().any(|p| require(user, p).is_ok()) {
+        Ok(())
+    } else {
+        require(user, perms[0])
+    }
+}
+
 fn require(user: &SessionUser, perm: &str) -> ApiResult<()> {
     if user.permissions.iter().any(|p| p == perm) {
         Ok(())
@@ -710,39 +718,46 @@ pub fn dispatch(core: &Core, token: Option<&str>, method: &str, params: Value) -
         }
 
         // ---------------------------------------------------------- tables
-        "tables.list" => {
-            let rows = conn
-                .prepare("SELECT id, name, seats, sort, active FROM dining_tables ORDER BY sort, id")?
-                .query_map([], |r| Ok(json!({"id": r.get::<_, i64>(0)?, "name": r.get::<_, String>(1)?, "seats": r.get::<_, i64>(2)?,
-                                              "sort": r.get::<_, i64>(3)?, "active": r.get::<_, bool>(4)?})))?
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(json!(rows))
+        "tables.list" | "tables.plan" => {
+            require_any(&me, &["pos.sell", "settings.manage"])?;
+            crate::floors::plan(&conn)
         }
         "tables.save" => {
             require(&me, "settings.manage")?;
+            let id = crate::floors::save_table(&conn, &me, p(params)?)?;
+            Ok(json!({ "id": id }))
+        }
+        "tables.save_floor" => {
+            require(&me, "settings.manage")?;
+            let id = crate::floors::save_floor(&conn, &me, p(params)?)?;
+            Ok(json!({ "id": id }))
+        }
+        "tables.delete_floor" => {
+            require(&me, "settings.manage")?;
+            crate::floors::delete_floor(&conn, &me, p::<IdP>(params)?.id)?;
+            Ok(Value::Null)
+        }
+        "tables.layout" => {
+            require(&me, "settings.manage")?;
             #[derive(Deserialize)]
             struct P {
-                id: Option<i64>,
-                name: String,
-                seats: i64,
-                #[serde(default)]
-                sort: i64,
-                active: bool,
+                floor_id: i64,
+                tables: Vec<crate::floors::Pos>,
             }
-            let t: P = p(params)?;
-            if t.name.trim().is_empty() || t.name.chars().count() > 30 || !(1..=50).contains(&t.seats) {
-                return Err(ApiError::invalid("table name and 1-50 seats required"));
-            }
-            match t.id {
-                Some(id) => {
-                    conn.execute("UPDATE dining_tables SET name=?2, seats=?3, sort=?4, active=?5 WHERE id=?1", params![id, t.name.trim(), t.seats, t.sort, t.active])?;
-                }
-                None => {
-                    conn.execute("INSERT INTO dining_tables (name, seats, sort, active) VALUES (?1,?2,?3,?4)", params![t.name.trim(), t.seats, t.sort, t.active])?;
-                }
-            }
-            audit::log(&conn, Some(me.id), "table.saved", Some("table"), None, Some(json!({"name": t.name.trim(), "active": t.active})))?;
+            let l: P = p(params)?;
+            crate::floors::save_layout(&conn, &me, l.floor_id, l.tables)?;
             Ok(Value::Null)
+        }
+        "orders.move_table" => {
+            require(&me, "pos.sell")?;
+            #[derive(Deserialize)]
+            struct P {
+                order_id: i64,
+                table_id: i64,
+            }
+            let m: P = p(params)?;
+            crate::floors::move_order(&conn, &me, m.order_id, m.table_id)?;
+            orders::get(&conn, m.order_id)
         }
 
         // ---------------------------------------------------------- kitchen display

@@ -6,6 +6,7 @@ pub mod cash;
 pub mod db;
 pub mod error;
 pub mod escpos;
+pub mod floors;
 pub mod item;
 pub mod kds;
 pub mod net;

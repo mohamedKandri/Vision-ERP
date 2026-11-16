@@ -468,3 +468,12 @@ Each phase records what was **verified** (by a test or by running the app) and w
 - The Authorization value is never returned to the screen (`has_http_auth` only) and not written to the audit log; editing without retyping keeps it.
 - Verified: Rust tests 92 pass (migration keeps printers + routing; local HTTP server receives raw body, base64 decodes to the exact ESC/POS bytes, auth header sent, HTTP 503 fails the job; validation). Typecheck + 83 Vitest pass.
 - Not verified: a real HTTP print bridge/printer; the edited Printers screen in the running app.
+
+## Floor plan and tables
+
+- New **Plan de salle / Floor plan** app (permission `settings.manage`): floors (rooms), tables on a 24 x 16 grid; drag to place, tap to edit name, seats, shape (square/round), size, floor, active. Layout save is all-or-nothing.
+- POS table button now opens the live floor plan: free / occupied / ready / paid colours, amount due, order number and minutes open. Tap a free table to seat the new order, tap a busy one (with nothing in progress) to open its order; with a saved dine-in order open, tapping a table moves the order (and its split parts) there (`orders.move_table`, audited).
+- Migration 0007: `floors`, table position columns; existing tables laid out automatically (Terrasse… on the terrace floor). Ran on the real app DB at start: version 7, all 10 tables placed.
+- Rules: unique table names, tables must fit on the board, unknown floor rejected, can't deactivate a table with an open order, can't delete a floor that has tables, closed orders can't move.
+- Verified: Rust 95 tests pass (3 new floor tests), typecheck, Vitest 83 pass.
+- Not verified: the screens by eye / by touch (drag on a real tablet), RTL layout of the board.
