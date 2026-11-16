@@ -325,6 +325,12 @@ export function PosScreen({ me }: { me: SessionUser }) {
         {/* ---------------- ticket (left) */}
         <section aria-label={t("pos_receipt")} className="flex min-h-0 flex-col bg-[var(--panel)]">
           <div className="flex items-center gap-2 border-b line px-3 py-2">
+            {ctx.tables.length > 0 && (
+              <button onClick={() => setFloorMode(true)} title={t("fl_tables")}
+                className="flex h-11 shrink-0 items-center gap-1.5 rounded-sm bg-brand px-3 text-[13px] font-semibold text-white">
+                <LayoutDashboard className="h-4 w-4" />{t("fl_tables")}
+              </button>
+            )}
             <div className="min-w-0 flex-1">
               <b className="num text-lg">{order ? `#${orderLabel(order)}` : t("pos_new_order")}</b>
               <span className="muted ms-2 text-[13px]">
