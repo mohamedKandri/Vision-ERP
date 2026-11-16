@@ -20,6 +20,7 @@ pub const MIGRATIONS: &[Migration] = &[
     Migration { version: 5, name: "devices_kds", sql: include_str!("../migrations/0005_devices_kds.sql") },
     Migration { version: 6, name: "printer_formats", sql: include_str!("../migrations/0006_printer_formats.sql") },
     Migration { version: 7, name: "floor_plan", sql: include_str!("../migrations/0007_floor_plan.sql") },
+    Migration { version: 8, name: "floor_freeform", sql: include_str!("../migrations/0008_floor_freeform.sql") },
 ];
 
 /// A nestable transaction built on SAVEPOINT. Commits with `.commit()`; rolls back when

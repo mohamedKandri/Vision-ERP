@@ -16,8 +16,9 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-pub const GRID_W: i64 = 24;
-pub const GRID_H: i64 = 16;
+pub const GRID_W: i64 = 96;
+pub const GRID_H: i64 = 64;
+pub const ITEM_KINDS: &[&str] = &["wall", "bar", "door", "window", "plant", "zone", "label"];
 /// A table is busy until its orders are paid (encaissé), even if the kitchen is still serving them.
 const OPEN: &str = "o.status NOT IN ('closed','voided') AND o.payment_status NOT IN ('paid','refunded')";
 
@@ -28,11 +29,11 @@ pub fn plan(conn: &Connection) -> ApiResult<Value> {
         .query_map([], |r| Ok(json!({"id": r.get::<_, i64>(0)?, "name": r.get::<_, String>(1)?, "sort": r.get::<_, i64>(2)?, "active": r.get::<_, bool>(3)?})))?
         .collect::<Result<Vec<_>, _>>()?;
     let mut tables = conn
-        .prepare("SELECT id, name, seats, sort, active, floor_id, x, y, w, h, shape FROM dining_tables ORDER BY sort, id")?
+        .prepare("SELECT id, name, seats, sort, active, floor_id, x, y, w, h, shape, rotation FROM dining_tables ORDER BY sort, id")?
         .query_map([], |r| {
             Ok(json!({"id": r.get::<_, i64>(0)?, "name": r.get::<_, String>(1)?, "seats": r.get::<_, i64>(2)?, "sort": r.get::<_, i64>(3)?,
                       "active": r.get::<_, bool>(4)?, "floor_id": r.get::<_, Option<i64>>(5)?, "x": r.get::<_, i64>(6)?, "y": r.get::<_, i64>(7)?,
-                      "w": r.get::<_, i64>(8)?, "h": r.get::<_, i64>(9)?, "shape": r.get::<_, String>(10)?, "orders": []}))
+                      "w": r.get::<_, i64>(8)?, "h": r.get::<_, i64>(9)?, "shape": r.get::<_, String>(10)?, "rotation": r.get::<_, i64>(11)?, "orders": []}))
         })?
         .collect::<Result<Vec<_>, _>>()?;
     let mut stmt = conn.prepare(&format!(
@@ -50,7 +51,15 @@ pub fn plan(conn: &Connection) -> ApiResult<Value> {
             t["orders"].as_array_mut().unwrap().push(o);
         }
     }
-    Ok(json!({"grid": {"w": GRID_W, "h": GRID_H}, "floors": floors, "tables": tables}))
+    let items = conn
+        .prepare("SELECT id, floor_id, kind, label, color, x, y, w, h, rotation, z FROM floor_items ORDER BY z, id")?
+        .query_map([], |r| {
+            Ok(json!({"id": r.get::<_, i64>(0)?, "floor_id": r.get::<_, i64>(1)?, "kind": r.get::<_, String>(2)?, "label": r.get::<_, String>(3)?,
+                      "color": r.get::<_, String>(4)?, "x": r.get::<_, i64>(5)?, "y": r.get::<_, i64>(6)?, "w": r.get::<_, i64>(7)?,
+                      "h": r.get::<_, i64>(8)?, "rotation": r.get::<_, i64>(9)?, "z": r.get::<_, i64>(10)?}))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(json!({"grid": {"w": GRID_W, "h": GRID_H}, "floors": floors, "tables": tables, "items": items}))
 }
 
 #[derive(Deserialize)]
@@ -93,6 +102,7 @@ pub fn delete_floor(conn: &Connection, me: &SessionUser, id: i64) -> ApiResult<(
     if n > 0 {
         return Err(ApiError::new("conflict", "move or delete the tables on this floor first"));
     }
+    conn.execute("DELETE FROM floor_items WHERE floor_id=?1", [id])?;
     if conn.execute("DELETE FROM floors WHERE id=?1", [id])? == 0 {
         return Err(ApiError::not_found("floor"));
     }
@@ -120,16 +130,18 @@ pub struct TableIn {
     pub h: i64,
     #[serde(default = "square")]
     pub shape: String,
+    #[serde(default)]
+    pub rotation: i64,
 }
 fn three() -> i64 {
-    3
+    12
 }
 fn square() -> String {
     "square".into()
 }
 
 fn check_box(x: i64, y: i64, w: i64, h: i64) -> ApiResult<()> {
-    if !(1..=12).contains(&w) || !(1..=12).contains(&h) || x < 0 || y < 0 || x + w > GRID_W || y + h > GRID_H {
+    if w < 1 || h < 1 || x < 0 || y < 0 || x + w > GRID_W || y + h > GRID_H {
         return Err(ApiError::invalid("the table must fit on the floor"));
     }
     Ok(())
@@ -153,6 +165,9 @@ pub fn save_table(conn: &Connection, me: &SessionUser, t: TableIn) -> ApiResult<
         return Err(ApiError::invalid("unknown table shape"));
     }
     check_box(t.x, t.y, t.w, t.h)?;
+    if t.w < 2 || t.h < 2 || !(0..360).contains(&t.rotation) {
+        return Err(ApiError::invalid("bad table size or rotation"));
+    }
     check_floor(conn, t.floor_id)?;
     let dup: Option<i64> = conn
         .query_row("SELECT id FROM dining_tables WHERE lower(name)=lower(?1) AND id IS NOT ?2", params![name, t.id], |r| r.get(0))
@@ -170,8 +185,8 @@ pub fn save_table(conn: &Connection, me: &SessionUser, t: TableIn) -> ApiResult<
                     }
                 }
                 if tx.execute(
-                    "UPDATE dining_tables SET name=?2, seats=?3, sort=?4, active=?5, floor_id=?6, x=?7, y=?8, w=?9, h=?10, shape=?11 WHERE id=?1",
-                    params![id, name, t.seats, t.sort, t.active, t.floor_id, t.x, t.y, t.w, t.h, t.shape],
+                    "UPDATE dining_tables SET name=?2, seats=?3, sort=?4, active=?5, floor_id=?6, x=?7, y=?8, w=?9, h=?10, shape=?11, rotation=?12 WHERE id=?1",
+                    params![id, name, t.seats, t.sort, t.active, t.floor_id, t.x, t.y, t.w, t.h, t.shape, t.rotation],
                 )? == 0
                 {
                     return Err(ApiError::not_found("table"));
@@ -180,8 +195,8 @@ pub fn save_table(conn: &Connection, me: &SessionUser, t: TableIn) -> ApiResult<
             }
             None => {
                 tx.execute(
-                    "INSERT INTO dining_tables (name, seats, sort, active, floor_id, x, y, w, h, shape) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
-                    params![name, t.seats, t.sort, t.active, t.floor_id, t.x, t.y, t.w, t.h, t.shape],
+                    "INSERT INTO dining_tables (name, seats, sort, active, floor_id, x, y, w, h, shape, rotation) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+                    params![name, t.seats, t.sort, t.active, t.floor_id, t.x, t.y, t.w, t.h, t.shape, t.rotation],
                 )?;
                 tx.last_insert_rowid()
             }
@@ -219,21 +234,107 @@ pub struct Pos {
     pub y: i64,
     pub w: i64,
     pub h: i64,
+    #[serde(default)]
+    pub rotation: i64,
 }
 
-/// Save the positions after dragging tables around (one transaction, all or nothing).
-pub fn save_layout(conn: &Connection, me: &SessionUser, floor_id: i64, items: Vec<Pos>) -> ApiResult<()> {
+fn check_pos(p: &Pos, min: i64) -> ApiResult<()> {
+    check_box(p.x, p.y, p.w, p.h)?;
+    if p.w < min || p.h < min || !(0..360).contains(&p.rotation) {
+        return Err(ApiError::invalid("bad size or rotation"));
+    }
+    Ok(())
+}
+
+/// Save the positions after editing the plan (one transaction, all or nothing).
+pub fn save_layout(conn: &Connection, me: &SessionUser, floor_id: i64, tables: Vec<Pos>, items: Vec<Pos>) -> ApiResult<()> {
     check_floor(conn, Some(floor_id))?;
     in_tx(conn, |tx| {
-        for p in &items {
-            check_box(p.x, p.y, p.w, p.h)?;
-            if tx.execute("UPDATE dining_tables SET x=?2, y=?3, w=?4, h=?5 WHERE id=?1 AND floor_id=?6", params![p.id, p.x, p.y, p.w, p.h, floor_id])? == 0 {
+        for p in &tables {
+            check_pos(p, 2)?;
+            if tx.execute(
+                "UPDATE dining_tables SET x=?2, y=?3, w=?4, h=?5, rotation=?6 WHERE id=?1 AND floor_id=?7",
+                params![p.id, p.x, p.y, p.w, p.h, p.rotation, floor_id],
+            )? == 0
+            {
                 return Err(ApiError::invalid("table is not on this floor"));
             }
         }
-        audit::log(tx, Some(me.id), "floor.layout", Some("floor"), Some(&floor_id.to_string()), Some(json!({"tables": items.len()})))?;
+        for p in &items {
+            check_pos(p, 1)?;
+            if tx.execute(
+                "UPDATE floor_items SET x=?2, y=?3, w=?4, h=?5, rotation=?6 WHERE id=?1 AND floor_id=?7",
+                params![p.id, p.x, p.y, p.w, p.h, p.rotation, floor_id],
+            )? == 0
+            {
+                return Err(ApiError::invalid("element is not on this floor"));
+            }
+        }
+        audit::log(tx, Some(me.id), "floor.layout", Some("floor"), Some(&floor_id.to_string()), Some(json!({"tables": tables.len(), "items": items.len()})))?;
         Ok(())
     })
+}
+
+#[derive(Deserialize)]
+pub struct ItemIn {
+    pub id: Option<i64>,
+    pub floor_id: i64,
+    pub kind: String,
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub color: String,
+    pub x: i64,
+    pub y: i64,
+    pub w: i64,
+    pub h: i64,
+    #[serde(default)]
+    pub rotation: i64,
+    #[serde(default)]
+    pub z: i64,
+}
+
+/// Room elements: walls, bar counter, door, window, plant, zone, text label.
+pub fn save_item(conn: &Connection, me: &SessionUser, it: ItemIn) -> ApiResult<i64> {
+    if !ITEM_KINDS.contains(&it.kind.as_str()) {
+        return Err(ApiError::invalid("unknown element"));
+    }
+    check_floor(conn, Some(it.floor_id))?;
+    check_pos(&Pos { id: 0, x: it.x, y: it.y, w: it.w, h: it.h, rotation: it.rotation }, 1)?;
+    let label = it.label.trim();
+    let color_ok = it.color.is_empty() || (it.color.len() == 7 && it.color.starts_with('#') && it.color[1..].chars().all(|c| c.is_ascii_hexdigit()));
+    if label.chars().count() > 40 || !color_ok {
+        return Err(ApiError::invalid("bad label or colour"));
+    }
+    let id = match it.id {
+        Some(id) => {
+            if conn.execute(
+                "UPDATE floor_items SET floor_id=?2, kind=?3, label=?4, color=?5, x=?6, y=?7, w=?8, h=?9, rotation=?10, z=?11 WHERE id=?1",
+                params![id, it.floor_id, it.kind, label, it.color, it.x, it.y, it.w, it.h, it.rotation, it.z],
+            )? == 0
+            {
+                return Err(ApiError::not_found("element"));
+            }
+            id
+        }
+        None => {
+            conn.execute(
+                "INSERT INTO floor_items (floor_id, kind, label, color, x, y, w, h, rotation, z) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+                params![it.floor_id, it.kind, label, it.color, it.x, it.y, it.w, it.h, it.rotation, it.z],
+            )?;
+            conn.last_insert_rowid()
+        }
+    };
+    audit::log(conn, Some(me.id), "floor.item_saved", Some("floor_item"), Some(&id.to_string()), Some(json!({"kind": it.kind, "floor_id": it.floor_id})))?;
+    Ok(id)
+}
+
+pub fn delete_item(conn: &Connection, me: &SessionUser, id: i64) -> ApiResult<()> {
+    if conn.execute("DELETE FROM floor_items WHERE id=?1", [id])? == 0 {
+        return Err(ApiError::not_found("element"));
+    }
+    audit::log(conn, Some(me.id), "floor.item_deleted", Some("floor_item"), Some(&id.to_string()), None)?;
+    Ok(())
 }
 
 /// Move an open dine-in order (and its split parts) to another table.
@@ -284,7 +385,7 @@ mod tests {
             for b in tables {
                 if a["id"] != b["id"] && a["floor_id"] == b["floor_id"] {
                     let (ax, ay, bx, by) = (a["x"].as_i64().unwrap(), a["y"].as_i64().unwrap(), b["x"].as_i64().unwrap(), b["y"].as_i64().unwrap());
-                    assert!(ax + 3 <= bx || bx + 3 <= ax || ay + 3 <= by || by + 3 <= ay, "{a} overlaps {b}");
+                    assert!(ax + 12 <= bx || bx + 12 <= ax || ay + 12 <= by || by + 12 <= ay, "{a} overlaps {b}");
                 }
             }
         }
@@ -314,31 +415,46 @@ mod tests {
     #[test]
     fn table_rules() {
         let (c, owner, cashier) = demo();
-        let mk = |id: Option<i64>, name: &str, x: i64, w: i64| TableIn { id, name: name.into(), seats: 4, sort: 0, active: true, floor_id: Some(1), x, y: 0, w, h: 3, shape: "round".into() };
-        let id = save_table(&c, &owner, mk(None, "Bar 1", 20, 3)).unwrap();
-        assert!(save_table(&c, &owner, mk(None, "Bar 2", 22, 3)).is_err(), "off the board");
-        assert!(save_table(&c, &owner, mk(None, "bar 1", 0, 3)).is_err(), "duplicate name");
-        let mut bad = mk(None, "X", 0, 3);
+        let mk = |id: Option<i64>, name: &str, x: i64, w: i64| TableIn { id, name: name.into(), seats: 4, sort: 0, active: true, floor_id: Some(1), x, y: 0, w, h: 12, shape: "round".into(), rotation: 0 };
+        let id = save_table(&c, &owner, mk(None, "Bar 1", 80, 12)).unwrap();
+        assert!(save_table(&c, &owner, mk(None, "Bar 2", 90, 12)).is_err(), "off the board");
+        assert!(save_table(&c, &owner, mk(None, "bar 1", 0, 12)).is_err(), "duplicate name");
+        let mut bad = mk(None, "X", 0, 12);
         bad.floor_id = Some(99);
         assert!(save_table(&c, &owner, bad).is_err());
         // Can't deactivate a table with an open order.
         let o = dine_in(&c, &cashier, id);
-        let mut off = mk(Some(id), "Bar 1", 20, 3);
+        let mut off = mk(Some(id), "Bar 1", 80, 12);
         off.active = false;
         assert!(save_table(&c, &owner, off).is_err());
         c.execute("UPDATE orders SET status='voided' WHERE id=?1", [o]).unwrap();
-        let mut off = mk(Some(id), "Bar 1", 20, 3);
+        let mut off = mk(Some(id), "Bar 1", 80, 12);
         off.active = false;
         save_table(&c, &owner, off).unwrap();
         // Layout: all-or-nothing.
-        assert!(save_layout(&c, &owner, 1, vec![Pos { id: 1, x: 5, y: 5, w: 3, h: 3 }, Pos { id: 2, x: 23, y: 0, w: 3, h: 3 }]).is_err());
+        let pos = |id, x, w| Pos { id, x, y: 5, w, h: 12, rotation: 45 };
+        assert!(save_layout(&c, &owner, 1, vec![pos(1, 5, 12), pos(2, 90, 12)], vec![]).is_err());
         assert_ne!(c.query_row("SELECT x FROM dining_tables WHERE id=1", [], |r| r.get::<_, i64>(0)).unwrap(), 5, "rolled back");
-        save_layout(&c, &owner, 1, vec![Pos { id: 1, x: 5, y: 5, w: 4, h: 2 }]).unwrap();
-        assert!(save_layout(&c, &owner, 2, vec![Pos { id: 1, x: 0, y: 0, w: 3, h: 3 }]).is_err(), "table 1 is not on the terrace");
+        save_layout(&c, &owner, 1, vec![pos(1, 5, 20)], vec![]).unwrap();
+        assert_eq!(c.query_row("SELECT w, rotation FROM dining_tables WHERE id=1", [], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))).unwrap(), (20, 45));
+        assert!(save_layout(&c, &owner, 2, vec![pos(1, 0, 12)], vec![]).is_err(), "table 1 is not on the terrace");
+        // Room elements.
+        let el = |kind: &str, x: i64| ItemIn { id: None, floor_id: 1, kind: kind.into(), label: "Comptoir".into(), color: "#8B5E3C".into(), x, y: 40, w: 30, h: 4, rotation: 0, z: 0 };
+        let bar = save_item(&c, &owner, el("bar", 10)).unwrap();
+        assert!(save_item(&c, &owner, el("sofa", 10)).is_err());
+        assert!(save_item(&c, &owner, el("wall", 80)).is_err(), "off the board");
+        let mut bad = el("wall", 0);
+        bad.color = "red;".into();
+        assert!(save_item(&c, &owner, bad).is_err());
+        save_layout(&c, &owner, 1, vec![], vec![Pos { id: bar, x: 0, y: 0, w: 4, h: 30, rotation: 90 }]).unwrap();
+        let p = plan(&c).unwrap();
+        assert_eq!(p["items"][0]["rotation"], json!(90));
+        delete_item(&c, &owner, bar).unwrap();
+        assert!(plan(&c).unwrap()["items"].as_array().unwrap().is_empty());
         // Delete: used table kept for history (off the floor), unused one removed.
         delete_table(&c, &owner, id).unwrap();
         assert_eq!(c.query_row("SELECT floor_id IS NULL AND active=0 FROM dining_tables WHERE id=?1", [id], |r| r.get::<_, bool>(0)).unwrap(), true);
-        let fresh = save_table(&c, &owner, mk(None, "Bar 9", 0, 3)).unwrap();
+        let fresh = save_table(&c, &owner, mk(None, "Bar 9", 0, 12)).unwrap();
         delete_table(&c, &owner, fresh).unwrap();
         assert!(c.query_row("SELECT 1 FROM dining_tables WHERE id=?1", [fresh], |_| Ok(())).is_err());
         let busy = dine_in(&c, &cashier, 4);

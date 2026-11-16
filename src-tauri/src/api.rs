@@ -747,10 +747,23 @@ pub fn dispatch(core: &Core, token: Option<&str>, method: &str, params: Value) -
             #[derive(Deserialize)]
             struct P {
                 floor_id: i64,
+                #[serde(default)]
                 tables: Vec<crate::floors::Pos>,
+                #[serde(default)]
+                items: Vec<crate::floors::Pos>,
             }
             let l: P = p(params)?;
-            crate::floors::save_layout(&conn, &me, l.floor_id, l.tables)?;
+            crate::floors::save_layout(&conn, &me, l.floor_id, l.tables, l.items)?;
+            Ok(Value::Null)
+        }
+        "tables.save_item" => {
+            require(&me, "settings.manage")?;
+            let id = crate::floors::save_item(&conn, &me, p(params)?)?;
+            Ok(json!({ "id": id }))
+        }
+        "tables.delete_item" => {
+            require(&me, "settings.manage")?;
+            crate::floors::delete_item(&conn, &me, p::<IdP>(params)?.id)?;
             Ok(Value::Null)
         }
         "orders.move_table" => {
