@@ -1,4 +1,4 @@
-import { Bell, ChefHat, ClipboardList, Minus, Pause, Percent, Plus, Receipt, Scissors, Trash2, X } from "lucide-react";
+import { LayoutDashboard, Bell, ChefHat, ClipboardList, Minus, Pause, Percent, Plus, Receipt, Scissors, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ItemConfigurator } from "../components/ItemConfigurator";
 import { PaymentDialog, ReasonDialog, ReceiptView, useApproval } from "../components/PosDialogs";
@@ -75,6 +75,8 @@ export function PosScreen({ me }: { me: SessionUser }) {
   const [cat, setCat] = useState<number | null>(null);
   const [order, setOrder] = useState<Order | null>(null);
   const [cart, setCart] = useState<CartLine[]>([]);
+  // Restaurant mode: the till opens on the floor plan; picking a table starts or opens its order.
+  const [floorMode, setFloorMode] = useState(true);
   const [draft, setDraft] = useState<Draft>({ type: "takeaway", table_id: null, customer_name: "", customer_phone: "", customer_address: "", delivery_fee_cents: null });
   const [configuring, setConfiguring] = useState<{ productId: number; editKey?: number; initial?: ItemConfig } | null>(null);
   const [sheet, setSheet] = useState<{ kind: "cart"; key: number } | { kind: "line"; id: number } | null>(null);
@@ -171,6 +173,7 @@ export function PosScreen({ me }: { me: SessionUser }) {
 
   // -------------------------------------------------------------- actions
   const newOrder = () => {
+    setFloorMode(true);
     setOrder(null);
     setCart([]);
     setDraft({ type: "takeaway", table_id: null, customer_name: "", customer_phone: "", customer_address: "", delivery_fee_cents: null });
@@ -278,6 +281,33 @@ export function PosScreen({ me }: { me: SessionUser }) {
   const baseShown = cart.length ? estimate?.base ?? 0 : order?.base_cents ?? 0;
   const taxShown = cart.length ? estimate?.tax ?? 0 : order?.tax_cents ?? 0;
   const fkey = "flex min-w-0 flex-1 items-center justify-center gap-2 px-2 text-[13px] font-semibold disabled:opacity-30 [&>svg]:h-4 [&>svg]:w-4 hover:bg-white/5";
+  const startOrder = (type: "takeaway" | "delivery" | "dine_in", table_id: number | null = null) => {
+    setOrder(null);
+    setCart([]);
+    setDraft({ type, table_id, customer_name: "", customer_phone: "", customer_address: "", delivery_fee_cents: null });
+    setDialog(null);
+    setFloorMode(false);
+  };
+
+  if (floorMode && ctx.tables.length > 0) {
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        <PrintProblems />
+        <FloorHome
+          onTakeaway={() => startOrder("takeaway")}
+          onDelivery={() => startOrder("delivery")}
+          onTable={async (tb) => {
+            if (tb.orders.length) {
+              await load(tb.orders[tb.orders.length - 1].id);
+              setFloorMode(false);
+            } else startOrder("dine_in", tb.id);
+          }}
+        />
+        {toast.node}
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <PrintProblems />
@@ -433,6 +463,9 @@ export function PosScreen({ me }: { me: SessionUser }) {
             <span className="flex items-center gap-2"><ClipboardList className="h-4 w-4" />{t("pos_orders")}</span>
             {readyCount > 0 && <span className="flex items-center gap-1 rounded-sm bg-emerald-600 px-2 py-0.5 text-xs font-bold text-white"><Bell className="h-3 w-3" />{readyCount}</span>}
           </button>
+          {ctx.tables.length > 0 && (
+            <button onClick={() => setFloorMode(true)} className="flex h-11 items-center gap-2 rounded-sm border line px-3 text-[13px] font-semibold"><LayoutDashboard className="h-4 w-4" />{t("fl_tables")}</button>
+          )}
           <button onClick={newOrder} className="flex h-11 items-center gap-2 rounded-sm border line px-3 text-[13px] font-semibold"><Plus className="h-4 w-4" />{t("pos_new_order")}</button>
           <div className="flex-1" />
           {order && order.status === "closed" ? (
@@ -852,5 +885,32 @@ function TablePicker({ current, moving, onClose, onNone, onPick }: {
         </>
       )}
     </Modal>
+  );
+}
+
+/** Start of service: the floor plan with live table status, plus takeaway / delivery shortcuts. */
+function FloorHome({ onTable, onTakeaway, onDelivery }: { onTable: (t: PlanTable) => void; onTakeaway: () => void; onDelivery: () => void }) {
+  const t = useT();
+  const { plan } = usePlan();
+  const [floorId, setFloorId] = useState<number | null>(null);
+  const floors = plan?.floors.filter((f) => f.active) ?? [];
+  const shown = floorId ?? floors[0]?.id ?? null;
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <FloorTabs floors={floors} value={shown} onChange={setFloorId} />
+        <div className="flex-1" />
+        <StateLegend />
+        <button onClick={onTakeaway} className="h-11 rounded-sm bg-brand px-5 font-semibold text-white">{t("order_type_takeaway")}</button>
+        <button onClick={onDelivery} className="h-11 rounded-sm border line panel-2 px-5 font-semibold">{t("order_type_delivery")}</button>
+      </div>
+      {plan ? (
+        <div className="mx-auto w-full max-w-[min(100%,calc((100vh-180px)*1.5))]">
+          <FloorBoard plan={plan} floorId={shown} onTap={onTable} />
+        </div>
+      ) : (
+        <p className="muted">…</p>
+      )}
+    </div>
   );
 }
