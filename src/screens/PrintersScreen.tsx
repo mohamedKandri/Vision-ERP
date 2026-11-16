@@ -7,7 +7,7 @@ import { pickName, type Names } from "../lib/menu";
 import { isApiError, rpc } from "../lib/rpc";
 import { getRegister } from "./PosScreen";
 
-type Kind = "network" | "bluetooth" | "usb" | "sunmi";
+type Kind = "network" | "bluetooth" | "usb" | "sunmi" | "http";
 interface PrinterRow {
   id: number;
   name: string;
@@ -21,6 +21,11 @@ interface PrinterRow {
   receipt_register: string | null;
   ticket_lang: "fr" | "en";
   active: boolean;
+  format: "raw" | "base64";
+  http_field: string;
+  has_http_auth: boolean;
+  /** Only sent when typed: the stored secret never comes back to the screen. */
+  http_auth?: string;
   last_ok_at: string | null;
   last_error: string | null;
   pending: number;
@@ -84,6 +89,8 @@ export function PrintersScreen() {
         id: edit.id ?? null, name: edit.name ?? "", kind: edit.kind ?? "network", address: edit.address ?? "",
         paper_mm: edit.paper_mm ?? 80, codepage: edit.codepage ?? "cp850", graphic_mode: !!edit.graphic_mode, cut: edit.cut ?? true,
         drawer: !!edit.drawer, receipt_register: edit.receipt_register ?? null, ticket_lang: edit.ticket_lang ?? "fr", active: edit.active ?? true,
+        format: edit.kind === "http" ? edit.format ?? "raw" : "raw", http_field: edit.http_field || "data",
+        http_auth: edit.http_auth === undefined ? null : edit.http_auth,
       });
       setEdit(null);
       toast.ok(t("saved"));
@@ -111,7 +118,7 @@ export function PrintersScreen() {
 
   if (!data) return <p className="muted p-6">{t("loading")}</p>;
   const active = data.printers.filter((p) => p.active);
-  const kinds: Kind[] = ["network", "bluetooth", "usb", "sunmi"];
+  const kinds: Kind[] = ["network", "bluetooth", "usb", "sunmi", "http"];
 
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-4 p-4">
@@ -129,7 +136,7 @@ export function PrintersScreen() {
                   {p.name}
                   {p.receipt_register && <span className="ms-2 rounded bg-brand/20 px-1.5 text-xs">🧾 {p.receipt_register}</span>}
                 </div>
-                <div className="muted truncate text-sm">{t(`pr_kind_${p.kind}` as Key)} · {p.address || "InnerPrinter"} · {p.paper_mm} mm</div>
+                <div className="muted truncate text-sm">{t(`pr_kind_${p.kind}` as Key)}{p.kind === "http" ? ` (${t(`pr_format_${p.format}` as Key)})` : ""} · {p.address || "InnerPrinter"} · {p.paper_mm} mm</div>
                 <div className={`text-xs ${p.last_error ? "text-red-500" : p.last_ok_at ? "text-emerald-500" : "muted"}`}>
                   {p.last_error ? `${t("pr_error")}: ${p.last_error}` : p.last_ok_at ? t("pr_ok") : t("pr_never")}
                   {p.pending + p.failed > 0 && ` · ${t("pr_pending", { n: p.pending + p.failed })}`}
@@ -226,6 +233,22 @@ export function PrintersScreen() {
               </Field>
             )}
             {edit.kind === "sunmi" && <p className="muted text-sm">{t("pr_sunmi_hint")}</p>}
+            {edit.kind === "http" && (
+              <>
+                <Field label={t("pr_url")}><TextInput dir="ltr" inputMode="url" placeholder="http://192.168.1.60:8080/print" value={edit.address ?? ""} onChange={(e) => setEdit({ ...edit, address: e.target.value })} /></Field>
+                <Field label={t("pr_format")}>
+                  <Select<string> value={edit.format ?? "raw"} onChange={(v) => setEdit({ ...edit, format: v as "raw" | "base64" })}
+                    options={[{ value: "raw", label: t("pr_format_raw") }, { value: "base64", label: t("pr_format_base64") }]} />
+                </Field>
+                {edit.format === "base64" && (
+                  <Field label={t("pr_http_field")}><TextInput dir="ltr" placeholder="data" value={edit.http_field ?? "data"} onChange={(e) => setEdit({ ...edit, http_field: e.target.value })} /></Field>
+                )}
+                <Field label={t("pr_http_auth")}>
+                  <TextInput dir="ltr" type="password" autoComplete="off" placeholder={edit.has_http_auth ? "••••••" : "Bearer …"} value={edit.http_auth ?? ""} onChange={(e) => setEdit({ ...edit, http_auth: e.target.value })} />
+                </Field>
+                <p className="muted text-sm">{t(edit.format === "base64" ? "pr_http_hint_base64" : "pr_http_hint_raw")}</p>
+              </>
+            )}
             <div className="grid gap-3 sm:grid-cols-3">
               <Field label={t("pr_paper")}>
                 <Select<number> value={edit.paper_mm ?? 80} onChange={(v) => setEdit({ ...edit, paper_mm: v as 58 | 80 })} options={[{ value: 58, label: "58 mm" }, { value: 80, label: "80 mm" }]} />

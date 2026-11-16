@@ -460,3 +460,11 @@ Each phase records what was **verified** (by a test or by running the app) and w
 - Offline mode covers new orders only. Payments, edits to existing orders, and closing the
   till need the Host.
 - Host sessions live in memory, so after a Host restart the users on the tills log in again.
+
+## Printer output formats (HTTP / base64)
+
+- New printer type **HTTP (URL)** with format **ESC/POS raw** (POST `application/octet-stream`) or **ESC/POS base64** (POST JSON `{ <field>: base64, printer, bytes }`). JSON field name and optional `Authorization` header are configurable. Only `http://` (no TLS bundled).
+- Migration 0006 rebuilds `printers` (kind check + `format`, `http_field`, `http_auth`); stations routing and the one-receipt-printer-per-register rule are kept.
+- The Authorization value is never returned to the screen (`has_http_auth` only) and not written to the audit log; editing without retyping keeps it.
+- Verified: Rust tests 92 pass (migration keeps printers + routing; local HTTP server receives raw body, base64 decodes to the exact ESC/POS bytes, auth header sent, HTTP 503 fails the job; validation). Typecheck + 83 Vitest pass.
+- Not verified: a real HTTP print bridge/printer; the edited Printers screen in the running app.

@@ -9,6 +9,7 @@ use crate::audit;
 use crate::auth::SessionUser;
 use crate::error::{ApiError, ApiResult};
 use crate::escpos::{self, Align, Cfg, Codepage, Drawer, Line};
+use base64::Engine;
 use crate::item::{self, ItemConfig, MenuIndex};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Deserialize;
@@ -19,7 +20,9 @@ use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
-pub const KINDS: &[&str] = &["network", "bluetooth", "usb", "sunmi"];
+pub const KINDS: &[&str] = &["network", "bluetooth", "usb", "sunmi", "http"];
+/// How the ESC/POS bytes are delivered. `base64` only applies to HTTP printers.
+pub const FORMATS: &[&str] = &["raw", "base64"];
 /// SUNMI exposes its built-in printer as a paired Bluetooth device with this name
 /// (docs.sunmi.com, "Virtual Bluetooth InnerPrinter").
 pub const SUNMI_BT_NAME: &str = "InnerPrinter";
@@ -40,6 +43,12 @@ pub struct Printer {
     pub receipt_register: Option<String>,
     pub ticket_lang: String,
     pub active: bool,
+    /// raw | base64 (HTTP printers: base64 goes in a JSON body).
+    pub format: String,
+    /// HTTP printers: JSON field holding the base64 data.
+    pub http_field: String,
+    /// HTTP printers: optional Authorization header value.
+    pub http_auth: String,
 }
 
 impl Printer {
@@ -53,7 +62,7 @@ impl Printer {
     }
 }
 
-const PRINTER_COLS: &str = "id, name, kind, address, paper_mm, codepage, graphic_mode, cut, drawer, receipt_register, ticket_lang, active";
+const PRINTER_COLS: &str = "id, name, kind, address, paper_mm, codepage, graphic_mode, cut, drawer, receipt_register, ticket_lang, active, format, http_field, http_auth";
 
 fn printer_row(r: &rusqlite::Row) -> rusqlite::Result<Printer> {
     Ok(Printer {
@@ -69,6 +78,9 @@ fn printer_row(r: &rusqlite::Row) -> rusqlite::Result<Printer> {
         receipt_register: r.get(9)?,
         ticket_lang: r.get(10)?,
         active: r.get(11)?,
+        format: r.get(12)?,
+        http_field: r.get(13)?,
+        http_auth: r.get(14)?,
     })
 }
 
@@ -104,12 +116,40 @@ pub struct PrinterIn {
     pub ticket_lang: String,
     #[serde(default = "yes")]
     pub active: bool,
+    #[serde(default = "raw")]
+    pub format: String,
+    #[serde(default = "data_field")]
+    pub http_field: String,
+    /// None = keep the stored value (the screen never receives the secret back).
+    #[serde(default)]
+    pub http_auth: Option<String>,
 }
 fn yes() -> bool {
     true
 }
 fn fr() -> String {
     "fr".into()
+}
+fn raw() -> String {
+    "raw".into()
+}
+fn data_field() -> String {
+    "data".into()
+}
+
+/// HTTP printers: only plain http:// on the shop network (no TLS stack is bundled).
+pub fn check_http_url(u: &str) -> ApiResult<()> {
+    let rest = u.strip_prefix("http://").ok_or_else(|| ApiError::invalid("the URL must start with http://"))?;
+    let host = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let ok = !host.is_empty()
+        && host.len() <= 260
+        && host.chars().all(|c| c.is_ascii_alphanumeric() || ".-:[]".contains(c))
+        && u.chars().all(|c| c.is_ascii_graphic());
+    if ok {
+        Ok(())
+    } else {
+        Err(ApiError::invalid("bad printer URL"))
+    }
 }
 
 /// "host" or "host:port" (port defaults to 9100).
@@ -140,14 +180,30 @@ pub fn save_printer(conn: &Connection, me: &SessionUser, p: PrinterIn) -> ApiRes
         return Err(ApiError::invalid("bad paper, code page or ticket language"));
     }
     let address = p.address.trim().to_string();
+    if !FORMATS.contains(&p.format.as_str()) {
+        return Err(ApiError::invalid("unknown print format"));
+    }
+    if p.format == "base64" && p.kind != "http" {
+        return Err(ApiError::invalid("base64 is only for HTTP printers"));
+    }
+    let field = p.http_field.trim().to_string();
+    if field.is_empty() || field.len() > 40 || !field.chars().all(|c| c.is_ascii_alphanumeric() || "_.-".contains(c)) {
+        return Err(ApiError::invalid("bad JSON field name"));
+    }
+    if let Some(a) = &p.http_auth {
+        if a.len() > 500 || a.contains(['\r', '\n']) {
+            return Err(ApiError::invalid("bad Authorization value"));
+        }
+    }
     match p.kind.as_str() {
         "network" => {
             parse_network_address(&address)?;
         }
+        "http" => check_http_url(&address)?,
         "bluetooth" | "usb" if address.is_empty() => return Err(ApiError::invalid("choose the printer")),
         _ => {}
     }
-    if address.chars().count() > 200 {
+    if address.chars().count() > 300 {
         return Err(ApiError::invalid("address too long"));
     }
     let register = p.receipt_register.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(String::from);
@@ -160,25 +216,30 @@ pub fn save_printer(conn: &Connection, me: &SessionUser, p: PrinterIn) -> ApiRes
         Some(id) => {
             if tx.execute(
                 "UPDATE printers SET name=?2, kind=?3, address=?4, paper_mm=?5, codepage=?6, graphic_mode=?7, cut=?8, drawer=?9,
-                   receipt_register=?10, ticket_lang=?11, active=?12 WHERE id=?1",
-                params![id, p.name.trim(), p.kind, address, p.paper_mm, p.codepage, p.graphic_mode, p.cut, p.drawer, register, p.ticket_lang, p.active],
+                   receipt_register=?10, ticket_lang=?11, active=?12, format=?13, http_field=?14 WHERE id=?1",
+                params![id, p.name.trim(), p.kind, address, p.paper_mm, p.codepage, p.graphic_mode, p.cut, p.drawer, register, p.ticket_lang, p.active, p.format, field],
             )? == 0
             {
                 return Err(ApiError::not_found("printer"));
+            }
+            if let Some(a) = &p.http_auth {
+                tx.execute("UPDATE printers SET http_auth=?2 WHERE id=?1", params![id, a.trim()])?;
             }
             id
         }
         None => {
             tx.execute(
-                "INSERT INTO printers (name, kind, address, paper_mm, codepage, graphic_mode, cut, drawer, receipt_register, ticket_lang, active)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
-                params![p.name.trim(), p.kind, address, p.paper_mm, p.codepage, p.graphic_mode, p.cut, p.drawer, register, p.ticket_lang, p.active],
+                "INSERT INTO printers (name, kind, address, paper_mm, codepage, graphic_mode, cut, drawer, receipt_register, ticket_lang, active,
+                   format, http_field, http_auth)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
+                params![p.name.trim(), p.kind, address, p.paper_mm, p.codepage, p.graphic_mode, p.cut, p.drawer, register, p.ticket_lang, p.active,
+                        p.format, field, p.http_auth.as_deref().unwrap_or("").trim()],
             )?;
             tx.last_insert_rowid()
         }
     };
     audit::log(&tx, Some(me.id), "printer.saved", Some("printer"), Some(&id.to_string()),
-        Some(json!({"name": p.name.trim(), "kind": p.kind, "address": address, "receipt_register": register, "active": p.active})))?;
+        Some(json!({"name": p.name.trim(), "kind": p.kind, "address": address, "format": p.format, "receipt_register": register, "active": p.active})))?;
     tx.commit()?;
     Ok(id)
 }
@@ -197,8 +258,9 @@ pub fn list(conn: &Connection) -> ApiResult<Value> {
                 "id": p.id, "name": p.name, "kind": p.kind, "address": p.address, "paper_mm": p.paper_mm, "codepage": p.codepage,
                 "graphic_mode": p.graphic_mode, "cut": p.cut, "drawer": p.drawer, "receipt_register": p.receipt_register,
                 "ticket_lang": p.ticket_lang, "active": p.active,
-                "last_ok_at": r.get::<_, Option<String>>(12)?, "last_error": r.get::<_, Option<String>>(13)?,
-                "last_error_at": r.get::<_, Option<String>>(14)?, "pending": r.get::<_, i64>(15)?, "failed": r.get::<_, i64>(16)?,
+                "format": p.format, "http_field": p.http_field, "has_http_auth": !p.http_auth.is_empty(),
+                "last_ok_at": r.get::<_, Option<String>>(15)?, "last_error": r.get::<_, Option<String>>(16)?,
+                "last_error_at": r.get::<_, Option<String>>(17)?, "pending": r.get::<_, i64>(18)?, "failed": r.get::<_, i64>(19)?,
             }))
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -618,9 +680,37 @@ pub fn system_printers() -> Result<Vec<String>, String> {
     }
 }
 
+/// HTTP printer / print bridge: POST the ESC/POS bytes, either raw or base64 in JSON.
+pub fn send_http(p: &Printer, data: &[u8]) -> Result<(), String> {
+    check_http_url(&p.address).map_err(|e| e.message)?;
+    let agent = ureq::AgentBuilder::new().timeout_connect(std::time::Duration::from_secs(3)).timeout(std::time::Duration::from_secs(15)).build();
+    let mut req = agent.post(&p.address);
+    if !p.http_auth.is_empty() {
+        req = req.set("Authorization", &p.http_auth);
+    }
+    let result = if p.format == "base64" {
+        let mut body = serde_json::Map::new();
+        body.insert(p.http_field.clone(), json!(base64::engine::general_purpose::STANDARD.encode(data)));
+        body.insert("printer".into(), json!(p.name));
+        body.insert("bytes".into(), json!(data.len()));
+        req.send_json(Value::Object(body))
+    } else {
+        req.set("Content-Type", "application/octet-stream").send_bytes(data)
+    };
+    match result {
+        Ok(_) => Ok(()),
+        Err(ureq::Error::Status(code, resp)) => {
+            let body: String = resp.into_string().unwrap_or_default().chars().take(200).collect();
+            Err(format!("HTTP {code}{}", if body.is_empty() { String::new() } else { format!(": {body}") }))
+        }
+        Err(e) => Err(format!("connect {}: {e}", p.address)),
+    }
+}
+
 pub fn send(p: &Printer, data: &[u8]) -> Result<(), String> {
     match p.kind.as_str() {
         "network" => send_network(&p.address, data),
+        "http" => send_http(p, data),
         "usb" => {
             #[cfg(windows)]
             {
@@ -763,6 +853,7 @@ mod tests {
         save_printer(c, me, PrinterIn {
             id: None, name: name.into(), kind: "network".into(), address: address.into(), paper_mm: 80, codepage: "cp850".into(),
             graphic_mode: false, cut: true, drawer: true, receipt_register: register.map(String::from), ticket_lang: "fr".into(), active: true,
+            format: "raw".into(), http_field: "data".into(), http_auth: None,
         }).unwrap()
     }
     fn station(c: &Connection, code: &str) -> i64 {
@@ -933,7 +1024,7 @@ mod tests {
             buf
         });
         let p = Printer { id: 1, name: "t".into(), kind: "network".into(), address: addr.to_string(), paper_mm: 58, codepage: "cp850".into(),
-            graphic_mode: false, cut: true, drawer: false, receipt_register: None, ticket_lang: "fr".into(), active: true };
+            graphic_mode: false, cut: true, drawer: false, receipt_register: None, ticket_lang: "fr".into(), active: true, format: "raw".into(), http_field: "data".into(), http_auth: String::new() };
         let bytes = job_bytes(&p, "test", &serde_json::to_string(&test_doc(&p, "Burger Lab")).unwrap()).unwrap();
         send(&p, &bytes).unwrap();
         let got = h.join().unwrap();
@@ -950,10 +1041,105 @@ mod tests {
         assert!(e.contains("connect"), "{e}");
     }
 
+    /// One-shot HTTP server: returns (request head, body) of the first request, answers `status`.
+    fn http_once(status: &'static str) -> (String, std::thread::JoinHandle<(String, Vec<u8>)>) {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/print", l.local_addr().unwrap());
+        let h = std::thread::spawn(move || {
+            let (mut s, _) = l.accept().unwrap();
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 4096];
+            loop {
+                let n = s.read(&mut chunk).unwrap();
+                buf.extend_from_slice(&chunk[..n]);
+                if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                    let head = String::from_utf8_lossy(&buf[..pos]).to_string();
+                    let len: usize = head.lines().find_map(|l| l.to_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse().unwrap())).unwrap_or(0);
+                    while buf.len() < pos + 4 + len {
+                        let n = s.read(&mut chunk).unwrap();
+                        buf.extend_from_slice(&chunk[..n]);
+                    }
+                    let body = buf[pos + 4..pos + 4 + len].to_vec();
+                    let reply = format!("HTTP/1.1 {status}\r\nContent-Length: 4\r\nConnection: close\r\n\r\nnope");
+                    std::io::Write::write_all(&mut s, reply.as_bytes()).unwrap();
+                    return (head, body);
+                }
+            }
+        });
+        (url, h)
+    }
+
+    fn http_printer(url: &str, format: &str, auth: &str) -> Printer {
+        Printer { id: 1, name: "Bridge".into(), kind: "http".into(), address: url.into(), paper_mm: 80, codepage: "cp850".into(),
+            graphic_mode: false, cut: true, drawer: false, receipt_register: None, ticket_lang: "fr".into(), active: true,
+            format: format.into(), http_field: "escpos".into(), http_auth: auth.into() }
+    }
+
+    #[test]
+    fn http_printer_base64_json_with_auth() {
+        let (url, h) = http_once("200 OK");
+        let p = http_printer(&url, "base64", "Bearer abc123");
+        let bytes = job_bytes(&p, "test", &serde_json::to_string(&test_doc(&p, "Burger Lab")).unwrap()).unwrap();
+        send(&p, &bytes).unwrap();
+        let (head, body) = h.join().unwrap();
+        assert!(head.starts_with("POST /print"), "{head}");
+        assert!(head.to_lowercase().contains("authorization: bearer abc123"));
+        assert!(head.to_lowercase().contains("content-type: application/json"));
+        let v: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v["printer"], "Bridge");
+        assert_eq!(v["bytes"], json!(bytes.len()));
+        let decoded = base64::engine::general_purpose::STANDARD.decode(v["escpos"].as_str().unwrap()).unwrap();
+        assert_eq!(decoded, bytes, "base64 decodes to the exact ESC/POS bytes");
+    }
+
+    #[test]
+    fn http_printer_raw_body_and_errors() {
+        let (url, h) = http_once("200 OK");
+        let p = http_printer(&url, "raw", "");
+        send(&p, b"\x1b@hello").unwrap();
+        let (head, body) = h.join().unwrap();
+        assert!(head.to_lowercase().contains("content-type: application/octet-stream"));
+        assert!(!head.to_lowercase().contains("authorization"));
+        assert_eq!(body, b"\x1b@hello");
+        // Bridge answers an error: the job fails with the status, so the queue retries it.
+        let (url, h) = http_once("503 Service Unavailable");
+        let e = send(&http_printer(&url, "raw", ""), b"x").unwrap_err();
+        h.join().unwrap();
+        assert!(e.starts_with("HTTP 503"), "{e}");
+    }
+
+    #[test]
+    fn http_printer_validation() {
+        assert!(check_http_url("http://192.168.1.20:8080/print?x=1").is_ok());
+        assert!(check_http_url("https://x/print").is_err(), "no TLS bundled");
+        assert!(check_http_url("http://").is_err());
+        assert!(check_http_url("http://evil host/").is_err());
+        let (c, owner, _) = demo();
+        let mk = |kind: &str, address: &str, format: &str, field: &str| PrinterIn {
+            id: None, name: "B".into(), kind: kind.into(), address: address.into(), paper_mm: 80, codepage: "cp850".into(),
+            graphic_mode: false, cut: true, drawer: false, receipt_register: None, ticket_lang: "fr".into(), active: true,
+            format: format.into(), http_field: field.into(), http_auth: Some("Bearer t".into()),
+        };
+        let id = save_printer(&c, &owner, mk("http", "http://10.0.0.9/print", "base64", "data")).unwrap();
+        assert!(save_printer(&c, &owner, mk("network", "10.0.0.9", "base64", "data")).is_err(), "base64 only over HTTP");
+        assert!(save_printer(&c, &owner, mk("http", "http://10.0.0.9/print", "pdf", "data")).is_err());
+        assert!(save_printer(&c, &owner, mk("http", "http://10.0.0.9/print", "base64", "bad field!")).is_err());
+        // The secret is never sent back to the screen, and an edit without it keeps it.
+        let listed = list(&c).unwrap();
+        let row = listed["printers"].as_array().unwrap().iter().find(|p| p["id"] == id).unwrap().clone();
+        assert_eq!(row["has_http_auth"], json!(true));
+        assert!(row.get("http_auth").is_none());
+        let mut keep = mk("http", "http://10.0.0.9/print2", "raw", "data");
+        keep.id = Some(id);
+        keep.http_auth = None;
+        save_printer(&c, &owner, keep).unwrap();
+        assert_eq!(load_printer(&c, id).unwrap().http_auth, "Bearer t");
+    }
+
     #[test]
     fn drawer_job_needs_a_drawer() {
         let mut p = Printer { id: 1, name: "t".into(), kind: "sunmi".into(), address: String::new(), paper_mm: 58, codepage: "cp850".into(),
-            graphic_mode: false, cut: true, drawer: true, receipt_register: None, ticket_lang: "fr".into(), active: true };
+            graphic_mode: false, cut: true, drawer: true, receipt_register: None, ticket_lang: "fr".into(), active: true, format: "raw".into(), http_field: "data".into(), http_auth: String::new() };
         let b = job_bytes(&p, "drawer", "[]").unwrap();
         assert!(b.ends_with(&[0x10, 0x14, 0, 0, 0]), "SUNMI drawer command");
         p.drawer = false;

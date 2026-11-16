@@ -18,6 +18,7 @@ pub const MIGRATIONS: &[Migration] = &[
     Migration { version: 3, name: "orders", sql: include_str!("../migrations/0003_orders.sql") },
     Migration { version: 4, name: "printing", sql: include_str!("../migrations/0004_printing.sql") },
     Migration { version: 5, name: "devices_kds", sql: include_str!("../migrations/0005_devices_kds.sql") },
+    Migration { version: 6, name: "printer_formats", sql: include_str!("../migrations/0006_printer_formats.sql") },
 ];
 
 /// A nestable transaction built on SAVEPOINT. Commits with `.commit()`; rolls back when
@@ -96,18 +97,38 @@ pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     migrate_with(conn, MIGRATIONS)
 }
 
+/// Applies pending migrations. Foreign keys are switched off while migrating (SQLite's
+/// documented way to rebuild a table that others reference) and every reference is
+/// checked before each migration commits, so a migration can never leave a broken link.
 pub fn migrate_with(conn: &Connection, migrations: &[Migration]) -> rusqlite::Result<()> {
     let current = current_version(conn)?;
-    for m in migrations.iter().filter(|m| m.version > current) {
-        let tx = atomic(conn)?;
-        tx.execute_batch(m.sql)?;
-        tx.execute(
-            "INSERT INTO schema_migrations (version, name) VALUES (?1, ?2)",
-            rusqlite::params![m.version, m.name],
-        )?;
-        tx.commit()?;
+    let pending: Vec<&Migration> = migrations.iter().filter(|m| m.version > current).collect();
+    if pending.is_empty() {
+        return Ok(());
     }
-    Ok(())
+    let fk_was_on: bool = conn.query_row("PRAGMA foreign_keys", [], |r| r.get(0))?;
+    conn.pragma_update(None, "foreign_keys", false)?;
+    let result = (|| {
+        for m in pending {
+            let tx = atomic(conn)?;
+            tx.execute_batch(m.sql)?;
+            let broken: i64 = tx.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |r| r.get(0))?;
+            if broken > 0 {
+                return Err(rusqlite::Error::SqliteFailure(
+                    rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CONSTRAINT),
+                    Some(format!("migration {} breaks {broken} foreign key(s)", m.version)),
+                ));
+            }
+            tx.execute(
+                "INSERT INTO schema_migrations (version, name) VALUES (?1, ?2)",
+                rusqlite::params![m.version, m.name],
+            )?;
+            tx.commit()?;
+        }
+        Ok(())
+    })();
+    conn.pragma_update(None, "foreign_keys", fk_was_on)?;
+    result
 }
 
 #[cfg(test)]
@@ -192,6 +213,28 @@ mod tests {
             t.execute("INSERT INTO settings VALUES ('d','1')", []).unwrap();
         }
         assert_eq!(count(&c), 2, "uncommitted outer rolls back");
+    }
+
+    #[test]
+    fn printer_table_rebuild_keeps_printers_and_routing() {
+        let conn = Connection::open_in_memory().unwrap();
+        configure(&conn).unwrap();
+        migrate_with(&conn, &MIGRATIONS[..5]).unwrap();
+        conn.execute("INSERT INTO printers (id, name, kind, address, receipt_register) VALUES (7, 'Grill', 'network', '10.0.0.5', 'main')", []).unwrap();
+        conn.execute("UPDATE stations SET printer_id = 7 WHERE code = 'grill'", []).unwrap();
+        migrate(&conn).unwrap();
+        let (name, format, field): (String, String, String) = conn
+            .query_row("SELECT name, format, http_field FROM printers WHERE id = 7", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap();
+        assert_eq!((name.as_str(), format.as_str(), field.as_str()), ("Grill", "raw", "data"));
+        let routed: i64 = conn.query_row("SELECT printer_id FROM stations WHERE code='grill'", [], |r| r.get(0)).unwrap();
+        assert_eq!(routed, 7);
+        let fk: bool = conn.query_row("PRAGMA foreign_keys", [], |r| r.get(0)).unwrap();
+        assert!(fk, "foreign keys back on");
+        conn.execute("INSERT INTO printers (name, kind, address, format) VALUES ('Bridge', 'http', 'http://10.0.0.9/print', 'base64')", []).unwrap();
+        assert!(conn.execute("INSERT INTO printers (name, kind, address, format) VALUES ('X', 'http', 'u', 'pdf')", []).is_err());
+        // Uniqueness of the receipt printer per register survives the rebuild.
+        assert!(conn.execute("INSERT INTO printers (name, kind, address, receipt_register) VALUES ('Y', 'network', '10.0.0.6', 'main')", []).is_err());
     }
 
     #[test]
