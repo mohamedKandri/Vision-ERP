@@ -49,6 +49,7 @@ const KEYS: &[(&str, Kind)] = &[
     ("loyalty_points_per_mad", Kind::Int { min: 0, max: 100 }),
     ("loyalty_point_value_cents", Kind::Int { min: 0, max: 10_000 }),
     ("stock_restore_on_void", Kind::Bool),
+    ("stock_restore_on_refund", Kind::Bool),
     ("auto_86_on_stockout", Kind::Bool),
     ("backup_daily", Kind::Bool),
     ("backup_keep_days", Kind::Int { min: 1, max: 365 }),
@@ -90,6 +91,7 @@ pub fn defaults() -> Map<String, Value> {
         "loyalty_points_per_mad": 1,
         "loyalty_point_value_cents": 10,
         "stock_restore_on_void": true,
+        "stock_restore_on_refund": false,
         "auto_86_on_stockout": false,
         "backup_daily": true,
         "backup_keep_days": 30

@@ -607,7 +607,7 @@ pub fn save_product(conn: &Connection, user_id: i64, p: ProductIn) -> ApiResult<
 /// 86 / un-86 a product (out of stock today).
 pub fn set_available(conn: &Connection, user_id: i64, id: i64, available: bool) -> ApiResult<()> {
     if conn.execute(
-        "UPDATE products SET available=?2, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?1",
+        "UPDATE products SET available=?2, stock_out=0, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?1",
         params![id, available],
     )? == 0
     {

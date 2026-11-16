@@ -460,6 +460,7 @@ pub fn submit(conn: &Connection, me: &SessionUser, s: SubmitIn) -> ApiResult<i64
     } else if s.order_id.is_some() || s.send {
         tx.execute("UPDATE orders SET held=0 WHERE id=?1", [order_id])?;
     }
+    crate::stock::sync_order(&tx, order_id, Some(me.id))?;
     recompute(&tx, order_id)?;
     tx.commit()?;
     Ok(order_id)
@@ -489,6 +490,7 @@ pub fn update_line(conn: &Connection, line_id: i64, qty: Option<i64>, note: Opti
         check_text(&n, 200, "note")?;
         tx.execute("UPDATE order_lines SET note=?2 WHERE id=?1", params![line_id, n.trim()])?;
     }
+    crate::stock::sync_order(&tx, order_id, None)?;
     recompute(&tx, order_id)?;
     tx.commit()?;
     Ok(order_id)
@@ -524,6 +526,7 @@ pub fn remove_line(conn: &Connection, me: &SessionUser, line_id: i64, reason: Op
         audit::log(&tx, Some(me.id), "order.line_voided", Some("order"), Some(&order_id.to_string()),
             Some(json!({"line_id": line_id, "qty": qty, "names": serde_json::from_str::<Value>(&names).unwrap_or(Value::Null), "reason": reason.trim(), "approved_by": by})))?;
     }
+    crate::stock::sync_order(&tx, order_id, Some(me.id))?;
     recompute(&tx, order_id)?;
     tx.commit()?;
     Ok(order_id)
@@ -698,6 +701,7 @@ pub fn pay(conn: &Connection, me: &SessionUser, order_id: i64, pays: Vec<PayIn>,
     if due == 0 {
         tx.execute("UPDATE orders SET paid_at = COALESCE(paid_at, strftime('%Y-%m-%dT%H:%M:%fZ','now')), held=0 WHERE id=?1", [order_id])?;
     }
+    crate::stock::sync_order(&tx, order_id, Some(me.id))?;
     recompute(&tx, order_id)?;
     touch(&tx, order_id)?;
     tx.commit()?;
@@ -746,6 +750,7 @@ pub fn void(conn: &Connection, me: &SessionUser, order_id: i64, reason: &str, ap
         params![order_id, by, reason.trim()],
     )?;
     crate::kds::void_order(&tx, order_id)?;
+    crate::stock::sync_order(&tx, order_id, Some(me.id))?;
     audit::log(&tx, Some(me.id), "order.voided", Some("order"), Some(&order_id.to_string()),
         Some(json!({"reason": reason.trim(), "total_cents": o.total_cents, "approved_by": by})))?;
     tx.commit()?;
@@ -784,6 +789,7 @@ pub fn refund(conn: &Connection, me: &SessionUser, order_id: i64, reason: &str, 
         params![order_id, by, reason.trim()],
     )?;
     recompute(&tx, order_id)?;
+    crate::stock::sync_order(&tx, order_id, Some(me.id))?;
     audit::log(&tx, Some(me.id), "order.refunded", Some("order"), Some(&order_id.to_string()),
         Some(json!({"reason": reason.trim(), "amount_cents": o.paid_cents, "methods": by_method, "approved_by": by})))?;
     tx.commit()?;
@@ -850,12 +856,12 @@ pub fn split(conn: &Connection, me: &SessionUser, order_id: i64, moves: Vec<Spli
             tx.execute(
                 "INSERT INTO order_lines (order_id, product_id, variant_id, config, names, details, qty, unit_cents, happy_hour, tax_id,
                    tax_rate_bp, price_include, discount_kind, discount_value, discount_reason, discount_by, note, station_id,
-                   kitchen_status, sent_at)
+                   kitchen_status, sent_at, stock_per_unit)
                  SELECT ?2, product_id, variant_id, config, names, details, ?3, unit_cents, happy_hour, tax_id, tax_rate_bp, price_include,
                    CASE WHEN discount_kind='fixed' THEN NULL ELSE discount_kind END,
                    CASE WHEN discount_kind='fixed' THEN NULL ELSE discount_value END,
                    CASE WHEN discount_kind='fixed' THEN NULL ELSE discount_reason END,
-                   CASE WHEN discount_kind='fixed' THEN NULL ELSE discount_by END, note, station_id, kitchen_status, sent_at
+                   CASE WHEN discount_kind='fixed' THEN NULL ELSE discount_by END, note, station_id, kitchen_status, sent_at, stock_per_unit
                  FROM order_lines WHERE id=?1",
                 params![m.line_id, new_id, m.qty],
             )?;
@@ -867,6 +873,8 @@ pub fn split(conn: &Connection, me: &SessionUser, order_id: i64, moves: Vec<Spli
     }
     recompute(&tx, order_id)?;
     recompute(&tx, new_id)?;
+    crate::stock::sync_order(&tx, order_id, Some(me.id))?;
+    crate::stock::sync_order(&tx, new_id, Some(me.id))?;
     audit::log(&tx, Some(me.id), "order.split", Some("order"), Some(&order_id.to_string()), Some(json!({"new_order_id": new_id})))?;
     tx.commit()?;
     Ok(new_id)

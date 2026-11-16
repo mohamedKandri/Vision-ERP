@@ -481,3 +481,124 @@ Each phase records what was **verified** (by a test or by running the app) and w
 - A table is free again as soon as its orders are paid (encaissé), even while the kitchen still serves; the "paid" colour is gone.
 - Caisse floor screen: "Edit plan" (managers, `settings.manage`) opens the editor in place: drag tables, add / edit / delete tables and floors, "Done" returns to service. Delete removes a never-used table, or takes a used one off the floor and keeps it for order history; refused while an order is open on it.
 - Verified: floor Rust tests (3) pass incl. paid-frees-table and delete rules; typecheck; Vitest 83. Not checked by eye.
+
+## Phase 6: inventory, recipes, automatic stock deduction, waste, stock counts (2026-11-16)
+
+### Built
+- Migration `0009_inventory`:
+  - `ingredients`: unit g / ml / piece; cost per kg, per litre or per piece; a minimum.
+    Quantities are integers in thousandths of the unit (150 g = 150000), so half a piece works
+    and no float ever touches stock.
+  - `recipe_lines`: what one unit of a **product**, a **size** or a **modifier option** uses.
+    A size with its own recipe replaces the product's (Double = 300 g of beef). An option
+    adds (Extra cheese = +1 slice) or removes ("No onion" = −20 g of onion; never below 0).
+  - `stock_moves`: the ledger. Kinds: sale, return, waste, adjust, count, purchase (Phase 7),
+    initial. Each move stores its value at the cost of the moment.
+    `ingredients.stock_milli` is a cache of that ledger, updated in the same transaction.
+  - `stock_counts` / `stock_count_lines`. `order_lines.stock_per_unit`. `products.stock_out`.
+- `stock.rs`: pure functions (consumption of a configured item, combos included; cost;
+  margin; price excl. VAT; ledger diff) and the DB layer.
+- **Automatic deduction** (`stock::sync_order`), called inside the same transaction as every
+  order change: send, pay, edit, remove/void a line, void, refund, split.
+  - A line uses stock once it goes to the kitchen, or once the order is fully paid (takeaway
+    paid before sending).
+  - It is idempotent: it compares what each line should have used with what the ledger
+    already has for that line, and writes only the difference. Calling it twice does
+    nothing.
+  - What a line uses per unit is **frozen the first time**, so editing a recipe never
+    rewrites past sales.
+  - Void (line or order) gives the stock back when **"Restore stock on void"** is on (default
+    on). Otherwise, what was cooked stays used. A refund gives it back when the new setting
+    **"Restore stock on refund"** is on (default off: the food was eaten).
+  - Split checks keep the ledger right. A line deleted after using stock is given back.
+- **Automatic 86** (setting "auto_86_on_stockout", default off): when an active ingredient
+  reaches 0, every product whose recipe (or one of its active sizes) uses it is marked out of
+  stock. It comes back by itself on restock. Products 86'd by hand are never touched, and
+  changing availability by hand clears the automatic flag. The till's menu is refreshed live.
+- Waste: per ingredient, or per prepared product (its recipe is taken out), with a reason.
+  Adjustments (in/out) need a reason. Both are in the audit log, with their value.
+- Stock counts: one open at a time. The sheet lists every active ingredient; only lines that
+  were filled in are corrected on validation, against the stock at that moment (sales made
+  during the count are taken into account). The expected quantity is stored.
+- Food cost: for every product and size (and each combo with its default choices): price
+  excl. VAT, recipe cost, food cost % and margin %.
+- API: `ingredients.list/save`, `stock.alerts/adjust/waste/history/food_cost/seed_demo`,
+  `recipes.list/save`, `counts.list/get/start/set/validate/cancel`. Live topic `stock`.
+  - Permissions: `inventory.manage` for everything. Users with `kds.use` or `pos.sell` can
+    read stock levels. `kds.use` can record waste (cashiers have it by default). Food cost
+    needs `inventory.manage` or `reports.view`.
+- Demo data: 49 ingredients with costs and opening stock, recipes for all 37 demo products
+  (Simple / Double / Triple, fries sizes, combo bag), extras, removals, free sauces, Maxi,
+  milkshake flavours. Seeded by "setup with demo menu", or from the Stock screen when there
+  are no ingredients yet (products matched by their French name; missing ones are skipped).
+- UI: **Stock** app with four tabs:
+  - **Stock**: alerts, search, low only, value, add/edit, adjust, waste.
+  - **Recipes & food cost**: list by category with a margin badge; recipe editor with live
+    cost and margin; options with + / − quantities.
+  - **Stock counts**: sheet with search, difference per line and value; validate after a
+    confirmation.
+  - **Movements**: filter by ingredient and type; order number, product, reason, user.
+  - Kitchen users only see the list and "Record waste".
+  - French, English and Arabic. Settings → Sales gains "Restore stock on refund".
+- Debug builds only: `BURGER_OS_DATA_DIR` points the app at another data folder (used to test
+  the screens on a throwaway database). Release builds ignore it.
+
+### Verified
+- **Rust: 106 tests pass** (11 new in `stock.rs`):
+  - consumption rules: size replaces product, extras ×qty, removals clamp at 0, combos;
+  - cost rounding: 150 g at 90/kg = 13.50, half a piece; tiny amounts are summed before
+    rounding;
+  - price excl. VAT and margin (45.00 incl. 10% → 40.91; negative margin under cost);
+  - demo seed: every product has a recipe; Classic Simple costs **18.71**; Double = +13.50;
+  - sales through the real order functions:
+    - nothing used before sending or paying;
+    - sending uses stock, and paying afterwards doesn't use it twice;
+    - paid-without-sending uses stock;
+    - Double + 2 extra cheese + no onion are counted exactly;
+  - voiding a line or an order returns stock; with the setting off it stays used; refund
+    follows its own setting;
+  - a recipe change doesn't rewrite a past sale; a split moves nothing;
+  - waste (ingredient and product), adjustments, reason required;
+  - count: only counted lines change, one open count at a time, closed count is locked,
+    expected stored; history in order;
+  - automatic 86 when the last kefta is used, back on restock; manual 86 is respected;
+    setting off does nothing;
+  - validation: unit locked once used, duplicate or negative product lines, unknown
+    ingredient, low alert;
+  - through `dispatch`: setup with the demo menu seeds ingredients; cashier can't edit
+    ingredients; kitchen can't adjust or count; waste shows who did it and the value;
+    topics;
+  - after every scenario: cached stock = sum of the ledger.
+- **Vitest: 90 pass** (7 new in `stock.test.ts`: quantity parsing/formatting, the same cost
+  and margin numbers as Rust, including Classic = 18.71). `tsc` clean.
+- **The real app, driven by a script, on a throwaway database** (separate debug build,
+  `BURGER_OS_DATA_DIR`, separate WebView2 profile; the shop's database wasn't touched):
+  30 checks pass, no page errors.
+  - Setup with the demo menu, then 2 Kefta Burgers sent to the kitchen. The Stock list shows
+    198 buns and 4.7 kg of kefta.
+  - Waste of one Kefta Burger from the dialog: 197 buns.
+  - +5 kg beef delivery shows 25 kg.
+  - Raising Avocado's minimum gives the "low" badge and the banner.
+  - Food cost: Classic Simple shows 40.91 excl. VAT, 18.71 cost, 54.27 % margin.
+  - The recipe editor shows 18.71. Adding a cheddar slice shows 19.91 live, and the list
+    has it after saving.
+  - "No onion" shows −20 g.
+  - Count: Coca counted 90 shows −6; the confirmation says 2 counted / 2 corrected; then
+    "Validated".
+  - Movements show every type, the waste reason and product, and the order number.
+  - Arabic: the page is right-to-left with Arabic ingredient names.
+  - The kitchen user sees no recipes, adjustments or values, but can record waste.
+
+### Not verified / known issues
+- Not tried on a tablet by touch, and the APK was not rebuilt this phase (no Android-only
+  code changed).
+- Supplier deliveries arrive in Phase 7 (`purchase` moves); until then use an adjustment
+  "Delivery".
+- Ingredient cost is the current cost (no weighted average yet; Phase 7 updates it on
+  receipt). Past moves keep the value they had.
+- Automatic 86 ignores combos and modifier options: a combo whose default burger is out
+  stays on sale, and the till still checks each choice.
+- Stock can go negative (a sale is never blocked); it shows in red.
+- Your dev app restarted during this phase and ran migration 9 on your own "test" database.
+  The migration only adds empty tables and two columns: no data was changed and no
+  ingredients were added there. "Load demo ingredients and recipes" in Stock adds them.

@@ -2,7 +2,7 @@
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useRef, useState } from "react";
 
-export type Topic = "orders" | "menu" | "cash" | "print" | "settings" | "users" | "devices" | "other" | "all";
+export type Topic = "orders" | "menu" | "cash" | "print" | "settings" | "users" | "devices" | "stock" | "other" | "all";
 
 /** Call `onChange` when one of `topics` changes (debounced), plus every `fallbackMs` as a safety net. */
 export function useLive(topics: Topic[], onChange: () => void, fallbackMs = 15000) {

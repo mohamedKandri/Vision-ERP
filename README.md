@@ -120,6 +120,27 @@ In Appareil on the Host, **Retirer** disconnects a lost or stolen device.
 - When every station is done, the order turns **Prête**: the till beeps, and the customer
   screen shows the number.
 
+## Stock
+
+**Stock** (managers; the kitchen can see levels and record waste):
+- **Stock** tab: every ingredient with quantity, minimum, cost and value. Low ones get a badge
+  and a banner. **Record waste** (a dropped burger or 500 g of expired meat, with a reason),
+  **Adjust** (+ delivery, − correction) and **Edit** (name in 3 languages, unit g / ml / piece,
+  cost per kg / L / piece, minimum, opening stock).
+  On an existing shop with no ingredients yet, **Load demo ingredients and recipes** adds a
+  full set for the demo menu.
+- **Recipes & food cost**: each product and size with its price excl. VAT, recipe cost and
+  margin (green ≥ 65 %, orange ≥ 50 %, red below). Tap one to edit its recipe. A size with
+  its own recipe replaces the product's. Extras add to the recipe; removals take away
+  ("No onion" = −20 g of onion).
+- Stock goes out by itself when an order is **sent to the kitchen** (or paid without being
+  sent). A void gives it back (setting **Restore stock on void**); a refund gives it back only
+  if **Restore stock on refund** is on. Turn on **Auto mark products out of stock** in
+  Settings → Sales to 86 products automatically when an ingredient runs out.
+- **Stock counts**: start a count, type what you find (leave a line empty to skip it), check
+  the differences, then **Validate**. Only the lines you typed are corrected.
+- **Movements**: every change, with who, why, the order number and the value.
+
 ## Printers
 
 **Imprimantes** (Owner): **Ajouter une imprimante**, choose the type, then **Test**.
@@ -178,3 +199,5 @@ adb install -r release/burger-os-0.1.0-arm64-test.apk
 - `src-tauri/src/api.rs`: the single RPC dispatcher. The webview calls `rpc(method, params)`.
   In Phase 5 the LAN server calls the same function, so auth and permissions live in one place.
 - `src-tauri/migrations/`: forward-only SQL migrations.
+- `src-tauri/src/stock.rs` + `src/lib/stock.ts`: stock quantities (thousandths of a unit), recipes, food cost; automatic deduction from orders.
+- Debug builds read `BURGER_OS_DATA_DIR` to use another data folder, so you can test on a throwaway database. Release builds ignore it.

@@ -17,6 +17,7 @@ pub mod printing;
 pub mod seed;
 pub mod server;
 pub mod settings;
+pub mod stock;
 
 use api::Core;
 use error::ApiError;
@@ -164,7 +165,12 @@ pub fn run() {
     let builder = builder.plugin(android_bluetooth::init());
     builder
         .setup(|app| {
-            let dir = app.path().app_data_dir()?;
+            // Debug builds only: BURGER_OS_DATA_DIR points the app at a throwaway data folder,
+            // so UI tests never touch the shop's real database.
+            let dir = match std::env::var_os("BURGER_OS_DATA_DIR").filter(|_| cfg!(debug_assertions)) {
+                Some(d) => std::path::PathBuf::from(d),
+                None => app.path().app_data_dir()?,
+            };
             std::fs::create_dir_all(&dir)?;
             let conn = db::open(&dir.join("burger-os.db"))?;
             let core = Arc::new(Core::new(conn));

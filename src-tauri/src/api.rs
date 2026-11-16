@@ -828,6 +828,100 @@ pub fn dispatch(core: &Core, token: Option<&str>, method: &str, params: Value) -
             Ok(Value::Null)
         }
 
+        // ---------------------------------------------------------- inventory
+        "ingredients.list" => {
+            // The kitchen and the till can read stock levels (to declare waste); managers edit.
+            require_any(&me, &["inventory.manage", "kds.use", "pos.sell"])?;
+            crate::stock::list_ingredients(&conn)
+        }
+        "stock.alerts" => {
+            require_any(&me, &["inventory.manage", "kds.use", "pos.sell"])?;
+            crate::stock::alerts(&conn)
+        }
+        "ingredients.save" => {
+            require(&me, "inventory.manage")?;
+            Ok(json!({ "id": crate::stock::save_ingredient(&conn, &me, p(params)?)? }))
+        }
+        "recipes.list" => {
+            require(&me, "inventory.manage")?;
+            crate::stock::recipes_list(&conn)
+        }
+        "recipes.save" => {
+            require(&me, "inventory.manage")?;
+            crate::stock::save_recipe(&conn, &me, p(params)?)?;
+            Ok(Value::Null)
+        }
+        "stock.food_cost" => {
+            require_any(&me, &["inventory.manage", "reports.view"])?;
+            crate::stock::food_cost(&conn)
+        }
+        "stock.adjust" => {
+            require(&me, "inventory.manage")?;
+            #[derive(Deserialize)]
+            struct P {
+                ingredient_id: i64,
+                delta_milli: i64,
+                reason: String,
+            }
+            let P { ingredient_id, delta_milli, reason } = p(params)?;
+            Ok(json!({ "value_cents": crate::stock::adjust(&conn, &me, ingredient_id, delta_milli, &reason)? }))
+        }
+        "stock.waste" => {
+            require_any(&me, &["inventory.manage", "kds.use"])?;
+            Ok(json!({ "value_cents": crate::stock::waste(&conn, &me, p(params)?)? }))
+        }
+        "stock.history" => {
+            require(&me, "inventory.manage")?;
+            let h = if params.is_null() { Default::default() } else { p(params)? };
+            crate::stock::history(&conn, h)
+        }
+        "stock.seed_demo" => {
+            require(&me, "inventory.manage")?;
+            if !crate::stock::seed_demo(&conn, me.id)? {
+                return Err(ApiError::new("conflict", "ingredients already exist"));
+            }
+            Ok(Value::Null)
+        }
+        "counts.list" => {
+            require(&me, "inventory.manage")?;
+            crate::stock::counts_list(&conn)
+        }
+        "counts.get" => {
+            require(&me, "inventory.manage")?;
+            crate::stock::count_get(&conn, p::<IdP>(params)?.id)
+        }
+        "counts.start" => {
+            require(&me, "inventory.manage")?;
+            #[derive(Deserialize, Default)]
+            struct P {
+                #[serde(default)]
+                note: String,
+            }
+            let P { note } = if params.is_null() { P::default() } else { p(params)? };
+            Ok(json!({ "id": crate::stock::count_start(&conn, &me, &note)? }))
+        }
+        "counts.set" => {
+            require(&me, "inventory.manage")?;
+            #[derive(Deserialize)]
+            struct P {
+                id: i64,
+                ingredient_id: i64,
+                counted_milli: Option<i64>,
+            }
+            let P { id, ingredient_id, counted_milli } = p(params)?;
+            crate::stock::count_set(&conn, id, ingredient_id, counted_milli)?;
+            Ok(Value::Null)
+        }
+        "counts.validate" => {
+            require(&me, "inventory.manage")?;
+            crate::stock::count_validate(&conn, &me, p::<IdP>(params)?.id)
+        }
+        "counts.cancel" => {
+            require(&me, "inventory.manage")?;
+            crate::stock::count_cancel(&conn, &me, p::<IdP>(params)?.id)?;
+            Ok(Value::Null)
+        }
+
         "audit.list" => {
             require(&me, "audit.view")?;
             #[derive(Deserialize)]
@@ -904,6 +998,7 @@ fn setup_init(conn: &Connection, s: SetupParams) -> ApiResult<Value> {
     }
     if s.demo_menu {
         crate::seed::seed_demo_menu(&tx, owner_id, 1)?;
+        crate::stock::seed_demo(&tx, owner_id)?;
     }
     audit::log(&tx, Some(owner_id), "setup.init", None, None, Some(json!({ "demo_users": s.demo_users, "demo_menu": s.demo_menu })))?;
     tx.commit()?;

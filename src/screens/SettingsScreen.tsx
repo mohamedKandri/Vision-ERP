@@ -53,6 +53,7 @@ const SECTIONS: { title: Key; fields: FieldDef[] }[] = [
       { key: "auto_print_receipt", type: "bool" },
       { key: "drawer_on_cash", type: "bool" },
       { key: "stock_restore_on_void", type: "bool" },
+      { key: "stock_restore_on_refund", type: "bool" },
       { key: "auto_86_on_stockout", type: "bool" },
     ],
   },
