@@ -1,189 +1,62 @@
-import { Download, FileText, RefreshCw } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Button, Card, Field, Tabs, TextInput, useToast } from "../components/ui";
+import { Calendar, ChevronDown, Download, FileText, RefreshCw } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Button, Card, Field, TextInput, useToast } from "../components/ui";
 import { errorText, translate, useT, type Key } from "../i18n";
 import { useLive } from "../lib/live";
 import { pickName } from "../lib/menu";
 import { formatMoney } from "../lib/money";
 import {
-  addDays, cellText, dayKey, dayRange, exportName, isNum, parseDay, presetDays, PRESETS, reportTables, startOfDay, toBase64, toCsv,
+  addDays, cellText, dayKey, dayRange, exportName, formatPercent, isNum, parseDay, presetDays, PRESETS, reportTables, startOfDay, toBase64, toCsv,
   type Preset, type RangeIn, type Report, type Table,
 } from "../lib/report";
 import { renderReportPdf } from "../lib/reportPdf";
 import { rpc, type Lang } from "../lib/rpc";
 
-type Tab = "today" | "range";
-
-export function ReportsScreen() {
-  const t = useT();
-  const [tab, setTab] = useState<Tab>("today");
-  return (
-    <div className="mx-auto flex max-w-6xl flex-col gap-4 p-4">
-      <Tabs value={tab} onChange={setTab} tabs={[{ id: "today", label: t("rp_tab_today") }, { id: "range", label: t("rp_tab_range") }]} />
-      {tab === "today" ? <TodayTab /> : <RangeTab />}
-    </div>
-  );
-}
-
 const tr = (lang: Lang) => (k: string, v?: Record<string, string | number>) => translate(lang, k as Key, v);
+const loc = (lang: Lang) => `${lang === "ar" ? "ar-MA" : lang === "en" ? "en-GB" : "fr-FR"}-u-nu-latn`;
 const fmtDateTime = (lang: Lang) => {
-  const f = new Intl.DateTimeFormat(`${lang === "ar" ? "ar-MA" : lang === "en" ? "en-GB" : "fr-FR"}-u-nu-latn`, { dateStyle: "short", timeStyle: "short" });
+  const f = new Intl.DateTimeFormat(loc(lang), { dateStyle: "short", timeStyle: "short" });
   return (iso: string) => f.format(new Date(iso));
 };
-const fmtDay = (lang: Lang, d: Date) =>
-  new Intl.DateTimeFormat(`${lang === "ar" ? "ar-MA" : lang === "en" ? "en-GB" : "fr-FR"}-u-nu-latn`, { dateStyle: "medium" }).format(d);
+const fmtDay = (lang: Lang, d: Date, style: "medium" | "full" = "medium") => new Intl.DateTimeFormat(loc(lang), { dateStyle: style }).format(d);
 
-// ------------------------------------------------------------------ today at a glance
-
-function Kpi({ label, value, sub }: { label: string; value: string; sub?: string }) {
-  return (
-    <div className="panel rounded-2xl p-4">
-      <div className="muted text-sm">{label}</div>
-      <div className="num mt-1 text-2xl font-semibold">{value}</div>
-      {sub && <div className="muted mt-1 text-xs">{sub}</div>}
-    </div>
-  );
+/** The period just before [first, last], same length. When the period ends today it stops at
+ *  the same time of day, so a day in progress is compared fairly. */
+function previousRange(first: Date, last: Date, now: Date): RangeIn {
+  const len = Math.round((startOfDay(last).getTime() - startOfDay(first).getTime()) / 86_400_000) + 1;
+  const pFirst = addDays(first, -len);
+  if (dayKey(last) === dayKey(now)) {
+    const end = new Date(now);
+    end.setDate(end.getDate() - len);
+    const from = startOfDay(pFirst);
+    return { from: from.toISOString(), to: end.toISOString(), tz_offset_min: -from.getTimezoneOffset() };
+  }
+  return dayRange(pFirst, addDays(last, -len));
 }
 
-function TodayTab() {
-  const t = useT();
-  const [today, setToday] = useState<Report | null>(null);
-  const [yday, setYday] = useState<Report | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const load = useCallback(() => {
-    const now = new Date();
-    const r = dayRange(now, now);
-    // Yesterday up to the same time, for a fair comparison.
-    const y0 = addDays(startOfDay(now), -1);
-    const y: RangeIn = { from: y0.toISOString(), to: new Date(now.getTime() - 86_400_000).toISOString(), tz_offset_min: -y0.getTimezoneOffset() };
-    Promise.all([rpc<Report>("reports.summary", r), rpc<Report>("reports.summary", y)]).then(
-      ([a, b]) => {
-        setToday(a);
-        setYday(b);
-        setErr(null);
-      },
-      (e) => setErr(errorText(t.lang, e)),
-    );
-  }, [t.lang]);
-  useEffect(() => void load(), [load]);
-  useLive(["orders", "cash"], load, 30000);
+/** "42,1 %" stays in that order in Arabic; amounts ("616,00 د.م.") are left as they are. */
+const pctLtr = (s: string) => (s.includes("%") ? <span dir="ltr">{s}</span> : s);
 
-  if (err) return <Card><p className="text-red-500">{err}</p></Card>;
-  if (!today || !yday) return <p className="muted p-4">{t("loading")}</p>;
-  const m = (c: number) => formatMoney(c, t.lang);
-  const tt = today.totals;
-  const vs = (a: number, b: number, money: boolean) => t("rp_vs_yesterday", { v: money ? m(b) : String(b) }) + (b ? ` (${a >= b ? "+" : ""}${Math.round(((a - b) / b) * 100)} %)` : "");
-  const top = [...today.by_product].sort((a, b) => b.qty - a.qty || b.total_cents - a.total_cents).slice(0, 5);
-  return (
-    <>
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Kpi label={t("rp_net")} value={m(tt.net_cents)} sub={vs(tt.net_cents, yday.totals.net_cents, true)} />
-        <Kpi label={t("rp_orders")} value={String(tt.orders)} sub={vs(tt.orders, yday.totals.orders, false)} />
-        <Kpi label={t("rp_avg_ticket")} value={m(tt.avg_ticket_cents)} sub={t("rp_vs_yesterday", { v: m(yday.totals.avg_ticket_cents) })} />
-        <Kpi label={t("rp_discounts_refunds")} value={m(tt.discount_cents + tt.refunded_cents)}
-          sub={t("rp_discounts_refunds_sub", { d: m(tt.discount_cents), r: m(tt.refunded_cents) })} />
-      </div>
-      <Card title={t("rp_by_hour")}>
-        <HourChart hours={today.by_hour} lang={t.lang} />
-      </Card>
-      <div className="grid gap-4 lg:grid-cols-3">
-        <Card title={t("rp_top_products")}>
-          {top.length === 0 ? <p className="muted">{t("rp_no_sales")}</p> : (
-            <ol className="flex flex-col gap-2">
-              {top.map((p, i) => (
-                <li key={p.product_id} className="flex items-baseline gap-2">
-                  <span className="muted num w-5">{i + 1}.</span>
-                  <span className="flex-1 truncate">{pickName(p.names ?? undefined, t.lang)}</span>
-                  <span className="num font-semibold">× {p.qty}</span>
-                  <span className="num muted w-28 text-end text-sm">{m(p.total_cents)}</span>
-                </li>
-              ))}
-            </ol>
-          )}
-        </Card>
-        <Card title={t("rp_by_payment")}>
-          <MiniList rows={today.by_payment.map((p) => [t(p.method === "cash" ? "pos_cash" : "pos_card"), m(p.net_cents)])} empty={t("rp_no_sales")} />
-        </Card>
-        <Card title={t("rp_by_type")}>
-          <MiniList rows={today.by_type.map((x) => [`${t(`order_type_${x.type}` as Key)} · ${x.orders}`, m(x.total_cents)])} empty={t("rp_no_sales")} />
-        </Card>
-      </div>
-    </>
-  );
-}
+type Section = "overview" | string;
+const GROUPS: { label: Key; ids: string[] }[] = [
+  { label: "rp_grp_sales", ids: ["summary", "by_day", "by_hour", "by_product", "by_category", "by_type", "by_payment", "by_staff"] },
+  { label: "rp_grp_tax", ids: ["vat"] },
+  { label: "rp_grp_costs", ids: ["food_cost", "discounts", "voids", "waste", "waste_items"] },
+  { label: "rp_grp_stock", ids: ["stock"] },
+];
 
-function MiniList({ rows, empty }: { rows: [string, string][]; empty: string }) {
-  if (!rows.length) return <p className="muted">{empty}</p>;
-  return (
-    <ul className="flex flex-col gap-2">
-      {rows.map(([a, b]) => (
-        <li key={a} className="flex justify-between gap-2">
-          <span>{a}</span>
-          <span className="num font-semibold">{b}</span>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-/** Net sales per local hour. One series: one colour, no legend; hover or tap shows the value. */
-function HourChart({ hours, lang }: { hours: Report["by_hour"]; lang: Lang }) {
-  const [hover, setHover] = useState<number | null>(null);
-  const active = hours.filter((h) => h.orders || h.total_cents).map((h) => h.hour);
-  const nowH = new Date().getHours();
-  const first = Math.min(active[0] ?? 11, nowH, 11);
-  const last = Math.min(23, Math.max(active[active.length - 1] ?? 23, nowH, first + 11)); // at least 12 hours
-  const shown = hours.slice(first, last + 1);
-  const max = Math.max(1, ...shown.map((h) => h.total_cents));
-  const t = (k: Key, v?: Record<string, string | number>) => translate(lang, k, v);
-  return (
-    <div>
-      <div className="flex h-48 items-end gap-1" dir="ltr" role="img" aria-label={t("rp_by_hour")}>
-        {shown.map((h) => {
-          const pct = Math.max(0, h.total_cents) / max;
-          return (
-            <button
-              key={h.hour}
-              type="button"
-              className="group relative flex h-full flex-1 flex-col justify-end"
-              onMouseEnter={() => setHover(h.hour)}
-              onMouseLeave={() => setHover(null)}
-              onClick={() => setHover(hover === h.hour ? null : h.hour)}
-              aria-label={`${h.hour}:00 ${formatMoney(h.total_cents, lang)}`}
-            >
-              {hover === h.hour && (
-                <span className="panel-2 border line absolute bottom-full start-1/2 z-10 mb-1 -translate-x-1/2 whitespace-nowrap rounded-lg px-2 py-1 text-xs shadow">
-                  {String(h.hour).padStart(2, "0")}:00 · {formatMoney(h.total_cents, lang)} · {t("rp_n_orders", { n: h.orders })}
-                </span>
-              )}
-              <span
-                className={`mx-auto block w-3/4 max-w-12 rounded-t ${hover === h.hour ? "bg-brand-strong" : "bg-brand"}`}
-                style={{ height: `${pct * 100}%`, minHeight: h.total_cents > 0 ? 2 : 0 }}
-              />
-            </button>
-          );
-        })}
-      </div>
-      <div className="muted mt-1 flex gap-1 text-[11px]" dir="ltr">
-        {shown.map((h) => (
-          <span key={h.hour} className="num flex-1 text-center">{h.hour % 2 === 0 ? String(h.hour).padStart(2, "0") : ""}</span>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// ------------------------------------------------------------------ date range
-
-function RangeTab() {
+export function ReportsScreen() {
   const t = useT();
   const toast = useToast();
   const [preset, setPreset] = useState<Preset | "custom">("today");
   const [days, setDays] = useState<[string, string]>(() => presetDays("today", new Date()).map(dayKey) as [string, string]);
   const [rep, setRep] = useState<Report | null>(null);
+  const [prev, setPrev] = useState<Report | null>(null);
   const [busy, setBusy] = useState(false);
   const [shop, setShop] = useState("");
   const [cats, setCats] = useState<Record<number, string>>({});
+  const [section, setSection] = useState<Section>("overview");
+  const [picking, setPicking] = useState(false);
 
   useEffect(() => {
     rpc<Record<string, unknown>>("settings.get").then((s) => setShop(String(s.shop_name ?? "")), () => {});
@@ -199,9 +72,10 @@ function RangeTab() {
   const load = useCallback(() => {
     if (!first || !last || first > last) return;
     setBusy(true);
-    rpc<Report>("reports.summary", dayRange(first, last)).then(
-      (r) => {
-        setRep(r);
+    Promise.all([rpc<Report>("reports.summary", dayRange(first, last)), rpc<Report>("reports.summary", previousRange(first, last, new Date()))]).then(
+      ([a, b]) => {
+        setRep(a);
+        setPrev(b);
         setBusy(false);
       },
       (e) => {
@@ -212,24 +86,29 @@ function RangeTab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [days[0], days[1], t.lang]);
   useEffect(() => void load(), [load]);
+  // A period that includes today follows new sales live.
+  const live = !!last && dayKey(last) === dayKey(new Date());
+  useLive(["orders", "cash"], () => live && load(), 30000);
 
   const tables = useMemo(() => (rep ? reportTables(rep, tr(t.lang), t.lang, fmtDateTime(t.lang), (id) => cats[id] ?? "") : []), [rep, t.lang, cats]);
-  const period = first && last ? (days[0] === days[1] ? fmtDay(t.lang, first) : t("rp_from_to", { a: fmtDay(t.lang, first), b: fmtDay(t.lang, last) })) : "";
+  const period = first && last ? (days[0] === days[1] ? fmtDay(t.lang, first, "full") : t("rp_from_to", { a: fmtDay(t.lang, first), b: fmtDay(t.lang, last) })) : "";
+  const prevLabel = (() => {
+    if (!first || !last) return "";
+    if (days[0] === days[1] && live) return t("rp_compared_yday");
+    const r = previousRange(first, last, new Date());
+    const a = new Date(r.from);
+    const b = addDays(new Date(r.to), live ? 0 : -1);
+    return t("rp_compared_prev", { p: dayKey(a) === dayKey(b) ? fmtDay(t.lang, a) : t("rp_from_to", { a: fmtDay(t.lang, a), b: fmtDay(t.lang, b) }) });
+  })();
+  const presetLabel = preset === "custom" ? t("rp_custom") : t(`rp_preset_${preset}` as Key);
 
   const save = async (ext: "csv" | "pdf") => {
     if (!rep) return;
     try {
       const head = [shop, `${t("rp_title")} · ${period}`, t("rp_generated", { d: fmtDateTime(t.lang)(new Date().toISOString()) })];
-      let bytes: Uint8Array;
-      if (ext === "csv") {
-        bytes = new TextEncoder().encode(toCsv(head, tables, t.lang));
-      } else {
-        bytes = renderReportPdf(
-          { shop, title: t("rp_title"), lines: [period, head[2]], footer: (p, n) => t("rp_page", { p, n }) },
-          tables,
-          t.lang,
-        );
-      }
+      const bytes = ext === "csv"
+        ? new TextEncoder().encode(toCsv(head, tables, t.lang))
+        : renderReportPdf({ shop, title: t("rp_title"), lines: [period, head[2]], footer: (p, n) => t("rp_page", { p, n }) }, tables, t.lang);
       const r = await rpc<{ path: string }>("device.save_export", { name: exportName(t("rp_file_prefix"), rep.range, ext), data: toBase64(bytes) });
       toast.ok(t("rp_saved", { p: r.path }));
     } catch (e) {
@@ -237,72 +116,326 @@ function RangeTab() {
     }
   };
 
+  const shown = section === "overview" ? null : tables.find((x) => x.id === section) ?? null;
+  const cmd = "flex min-h-10 items-center gap-1.5 rounded-md px-2.5 hov disabled:pointer-events-none disabled:opacity-35 [&>svg]:h-4 [&>svg]:w-4 [&>svg]:text-brand";
+
+  return (
+    <div className="flex min-h-full flex-col">
+      {toast.node}
+      <div role="toolbar" aria-label={t("rp_period")} className="relative flex flex-wrap items-center gap-1 border-b line bg-[var(--panel)] px-4 py-1.5 text-[13px]">
+        <button onClick={() => setPicking((x) => !x)} aria-expanded={picking} data-testid="rp-period"
+          className="hov flex min-h-10 items-center gap-2 rounded-md border line-strong px-3 font-semibold">
+          <Calendar className="h-4 w-4 text-brand" />{presetLabel}<ChevronDown className="h-4 w-4" />
+        </button>
+        <span className="muted px-2">{period}{prevLabel ? ` · ${prevLabel}` : ""}</span>
+        <span className="flex-1" />
+        <button className={cmd} onClick={load} disabled={!valid || busy}><RefreshCw className={busy ? "animate-spin" : ""} />{t("rp_refresh")}</button>
+        <button className={cmd} onClick={() => save("csv")} disabled={!rep}><Download />{t("rp_export_csv")}</button>
+        <button className={cmd} onClick={() => save("pdf")} disabled={!rep}><FileText />{t("rp_export_pdf")}</button>
+        {picking && (
+          <PeriodPicker
+            preset={preset}
+            days={days}
+            onPreset={(p) => { setPreset(p); setDays(presetDays(p, new Date()).map(dayKey) as [string, string]); setPicking(false); }}
+            onDays={(d) => { setPreset("custom"); setDays(d); }}
+            onClose={() => setPicking(false)}
+          />
+        )}
+      </div>
+      {!valid && <p className="px-4 pt-2 text-sm text-red-500">{t("rp_bad_range")}</p>}
+
+      <div className="flex flex-1 flex-wrap items-stretch">
+        <nav aria-label={t("rp_sections")} className="min-w-0 flex-[1_1_210px] border-e line bg-[var(--panel-2)] py-2.5 md:max-w-[240px]">
+          <SectionLink on={section === "overview"} onClick={() => setSection("overview")} label={t("rp_overview")} />
+          {GROUPS.map((g) => {
+            const list = g.ids.map((id) => tables.find((x) => x.id === id)).filter((x): x is Table => !!x);
+            if (!list.length) return null;
+            return (
+              <div key={g.label}>
+                <div className="muted px-4 pb-1 pt-3 text-xs font-bold">{t(g.label)}</div>
+                {list.map((x) => <SectionLink key={x.id} on={section === x.id} onClick={() => setSection(x.id)} label={x.title} />)}
+              </div>
+            );
+          })}
+        </nav>
+
+        <section aria-label={t("rp_title")} className="flex min-w-0 flex-[999_1_640px] flex-col gap-4 p-4 sm:p-5">
+          {!rep || !prev ? (
+            <p className="muted">{t("loading")}</p>
+          ) : shown ? (
+            <>
+              <h1 className="text-2xl font-semibold">{shown.title}</h1>
+              <ReportTable table={shown} lang={t.lang} empty={t("rp_nothing")} />
+            </>
+          ) : (
+            <Overview rep={rep} prev={prev} single={days[0] === days[1]} live={live} onProducts={() => setSection("by_product")} />
+          )}
+        </section>
+      </div>
+    </div>
+  );
+}
+
+function SectionLink({ on, onClick, label }: { on: boolean; onClick: () => void; label: string }) {
+  return (
+    <button onClick={onClick} aria-current={on ? "page" : undefined}
+      className={`mx-1.5 flex min-h-10 w-[calc(100%-12px)] items-center rounded-md px-3 text-start ${on ? "sel sel-mark font-semibold" : "hov"}`}>
+      {label}
+    </button>
+  );
+}
+
+function PeriodPicker({ preset, days, onPreset, onDays, onClose }: {
+  preset: Preset | "custom"; days: [string, string]; onPreset: (p: Preset) => void; onDays: (d: [string, string]) => void; onClose: () => void;
+}) {
+  const t = useT();
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const k = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    const c = (e: MouseEvent) => ref.current && !ref.current.contains(e.target as Node) && !(e.target as HTMLElement).closest("[data-testid=rp-period]") && onClose();
+    window.addEventListener("keydown", k);
+    window.addEventListener("mousedown", c);
+    return () => {
+      window.removeEventListener("keydown", k);
+      window.removeEventListener("mousedown", c);
+    };
+  }, [onClose]);
+  return (
+    <div ref={ref} role="dialog" aria-label={t("rp_period")} className="card absolute start-4 top-full z-30 mt-1 w-[min(420px,calc(100vw-32px))] rounded-3xl p-3 shadow-2xl">
+      <div className="grid grid-cols-2 gap-1">
+        {PRESETS.map((p) => (
+          <button key={p} onClick={() => onPreset(p)} aria-pressed={preset === p}
+            className={`min-h-11 rounded-md px-3 text-start ${preset === p ? "sel sel-mark font-semibold" : "hov"}`}>
+            {t(`rp_preset_${p}` as Key)}
+          </button>
+        ))}
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-2 border-t line pt-3">
+        <Field label={t("rp_from")}>
+          <TextInput type="date" value={days[0]} max={days[1]} onChange={(e) => onDays([e.target.value, days[1]])} />
+        </Field>
+        <Field label={t("rp_to")}>
+          <TextInput type="date" value={days[1]} min={days[0]} onChange={(e) => onDays([days[0], e.target.value])} />
+        </Field>
+      </div>
+      <div className="mt-3 flex justify-end"><Button variant="primary" onClick={onClose}>{t("close")}</Button></div>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ overview
+
+type Tone = "good" | "bad" | "flat";
+const toneCls: Record<Tone, string> = {
+  good: "bg-[#f1faf1] text-[#0e700e] dark:bg-emerald-500/15 dark:text-emerald-300",
+  bad: "bg-[#fdf3f4] text-[#b10e1c] dark:bg-red-500/15 dark:text-red-300",
+  flat: "bg-[var(--panel-2)] muted",
+};
+
+function Kpi({ label, value, delta, tone, before }: { label: string; value: string; delta: string; tone: Tone; before: string }) {
+  return (
+    <div className="card rounded-2xl px-4 py-3.5" data-testid="rp-kpi">
+      <div className="muted text-[13px]">{label}</div>
+      <div className="num mt-1 text-[26px] font-semibold leading-tight">{pctLtr(value)}</div>
+      <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs">
+        <span className={`rounded-full px-2 py-px font-semibold ${toneCls[tone]}`}>{delta}</span>
+        <span className="muted">{before}</span>
+      </div>
+    </div>
+  );
+}
+
+function Overview({ rep, prev, single, live, onProducts }: { rep: Report; prev: Report; single: boolean; live: boolean; onProducts: () => void }) {
+  const t = useT();
+  const m = (c: number) => formatMoney(c, t.lang);
+  const a = rep.totals;
+  const b = prev.totals;
+  // ▲ 12 % / ▼ 3 % / = ; "up is good" except where noted.
+  const pct = (x: number, y: number, upGood = true): { delta: string; tone: Tone } => {
+    if (x === y) return { delta: "=", tone: "flat" };
+    if (!y) return { delta: x > y ? "▲" : "▼", tone: (x > y) === upGood ? "good" : "bad" };
+    const p = Math.round(((x - y) / Math.abs(y)) * 100);
+    if (p === 0) return { delta: "≈", tone: "flat" };
+    return { delta: `${p > 0 ? "▲" : "▼"} ${Math.abs(p)} %`, tone: (p > 0) === upGood ? "good" : "bad" };
+  };
+  const count = (x: number, y: number): { delta: string; tone: Tone } =>
+    x === y ? { delta: "=", tone: "flat" } : { delta: `${x > y ? "▲" : "▼"} ${Math.abs(x - y)}`, tone: x > y ? "good" : "bad" };
+  const fcA = rep.food_cost.food_cost_bp;
+  const fcB = prev.food_cost.food_cost_bp;
+  const fc: { delta: string; tone: Tone } = fcA === null || fcB === null || fcA === fcB
+    ? { delta: "=", tone: "flat" }
+    : { delta: `${fcA > fcB ? "▲" : "▼"} ${t("rp_points", { v: formatPercent(Math.abs(fcA - fcB), t.lang).replace(" %", "") })}`, tone: fcA > fcB ? "bad" : "good" };
+  const before = (v: string) => t("rp_before", { v });
+  const dr = a.discount_cents + a.refunded_cents;
+  const drPrev = b.discount_cents + b.refunded_cents;
+
+  // Chart: hours for one day, days for a longer period; the previous period in a light shade.
+  const chart = single
+    ? (() => {
+        const act = rep.by_hour.concat(prev.by_hour).filter((h) => h.orders || h.total_cents).map((h) => h.hour);
+        const lo = Math.min(11, ...act);
+        const hi = Math.max(lo + 11, ...act);
+        return Array.from({ length: Math.min(23, hi) - lo + 1 }, (_, i) => lo + i).map((h) => ({
+          label: String(h).padStart(2, "0"),
+          now: rep.by_hour.find((x) => x.hour === h)?.total_cents ?? 0,
+          before: prev.by_hour.find((x) => x.hour === h)?.total_cents ?? 0,
+        }));
+      })()
+    : (() => {
+        const n = rep.by_day.length;
+        const start = new Date(rep.range.from);
+        return Array.from({ length: Math.max(n, Math.round((new Date(rep.range.to).getTime() - start.getTime()) / 86_400_000)) }, (_, i) => {
+          const d = addDays(start, i);
+          const key = dayKey(d);
+          const pk = dayKey(addDays(new Date(prev.range.from), i));
+          return {
+            label: String(d.getDate()),
+            now: rep.by_day.find((x) => x.day === key)?.total_cents ?? 0,
+            before: prev.by_day.find((x) => x.day === pk)?.total_cents ?? 0,
+          };
+        });
+      })();
+  const max = Math.max(1, ...chart.flatMap((c) => [c.now, c.before]));
+  const thisLabel = single && live ? t("rp_preset_today") : t("rp_this_period");
+  const prevLabel = single && live ? t("rp_preset_yesterday") : t("rp_prev_period");
+
+  const top = [...rep.by_product].sort((x, y) => y.total_cents - x.total_cents || y.qty - x.qty).slice(0, 5);
+  const topMax = Math.max(1, ...top.map((p) => p.total_cents));
+  const COLORS = ["#0f6cbd", "#e8a33d", "#7f56b3", "#2b8a3e"];
+  const splits = [
+    { title: t("rp_by_payment"), parts: rep.by_payment.map((p) => ({ label: t(p.method === "cash" ? "pos_cash" : "pos_card"), value: p.net_cents })) },
+    { title: t("rp_by_type"), parts: rep.by_type.map((x) => ({ label: t(`order_type_${x.type}` as Key), value: x.total_cents })) },
+  ];
+
   return (
     <>
-      {toast.node}
-      <Card>
-        <div className="flex flex-wrap gap-2">
-          {PRESETS.map((p) => (
-            <Button
-              key={p}
-              variant={preset === p ? "primary" : "ghost"}
-              onClick={() => {
-                setPreset(p);
-                setDays(presetDays(p, new Date()).map(dayKey) as [string, string]);
-              }}
-            >
-              {t(`rp_preset_${p}` as Key)}
-            </Button>
+      <h1 className="text-2xl font-semibold">{t("rp_overview")}</h1>
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(155px,1fr))] gap-3">
+        <Kpi label={t("rp_net")} value={m(a.net_cents)} {...pct(a.net_cents, b.net_cents)} before={before(m(b.net_cents))} />
+        <Kpi label={t("rp_orders")} value={String(a.orders)} {...count(a.orders, b.orders)} before={before(String(b.orders))} />
+        <Kpi label={t("rp_avg_ticket")} value={m(a.avg_ticket_cents)} {...pct(a.avg_ticket_cents, b.avg_ticket_cents)} before={before(m(b.avg_ticket_cents))} />
+        <Kpi label={t("rp_food_cost")} value={fcA === null ? "—" : formatPercent(fcA, t.lang)} {...fc} before={before(fcB === null ? "—" : formatPercent(fcB, t.lang))} />
+        <Kpi label={t("rp_discounts_refunds")} value={m(dr)} {...pct(dr, drPrev, false)} before={before(m(drPrev))} />
+      </div>
+
+      <section className="card rounded-2xl px-5 py-4">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 className="text-lg font-semibold">{single ? t("rp_by_hour") : t("rp_by_day")}</h2>
+          <span className="muted flex gap-4 text-xs">
+            <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded-sm bg-brand" />{thisLabel}</span>
+            <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded-sm bg-[#c7d7ea] dark:bg-[#3a5068]" />{prevLabel}</span>
+          </span>
+        </div>
+        <div className="mt-3 flex h-48 items-end gap-1.5 border-b line-strong" dir="ltr" role="img" aria-label={single ? t("rp_by_hour") : t("rp_by_day")}>
+          {chart.map((c) => (
+            <div key={c.label} className="flex h-full min-w-0 flex-1 items-end justify-center gap-[2px]"
+              title={`${c.label} · ${thisLabel} ${m(c.now)} · ${prevLabel} ${m(c.before)}`}>
+              <span className="block w-[42%] rounded-t-sm bg-[#c7d7ea] dark:bg-[#3a5068]" style={{ height: `${(Math.max(0, c.before) / max) * 100}%` }} />
+              <span className="block w-[42%] rounded-t-sm bg-brand" style={{ height: `${(Math.max(0, c.now) / max) * 100}%` }} />
+            </div>
           ))}
         </div>
-        <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_1fr_auto_auto_auto] sm:items-end">
-          <Field label={t("rp_from")}>
-            <TextInput type="date" value={days[0]} max={days[1]} onChange={(e) => { setPreset("custom"); setDays([e.target.value, days[1]]); }} />
-          </Field>
-          <Field label={t("rp_to")}>
-            <TextInput type="date" value={days[1]} min={days[0]} onChange={(e) => { setPreset("custom"); setDays([days[0], e.target.value]); }} />
-          </Field>
-          <Button onClick={load} disabled={!valid || busy} aria-label={t("rp_refresh")}><RefreshCw className={busy ? "animate-spin" : ""} /></Button>
-          <Button onClick={() => save("csv")} disabled={!rep}><Download className="inline" /> CSV</Button>
-          <Button onClick={() => save("pdf")} disabled={!rep}><FileText className="inline" /> PDF</Button>
+        <div className="muted mt-1 flex gap-1.5 text-[11px]" dir="ltr">
+          {chart.map((c, i) => <span key={c.label} className="num min-w-0 flex-1 text-center">{chart.length > 16 && i % 2 ? "" : c.label}</span>)}
         </div>
-        {!valid && <p className="mt-2 text-sm text-red-500">{t("rp_bad_range")}</p>}
-        {period && <p className="muted mt-2 text-sm">{period}</p>}
-      </Card>
-      {!rep ? <p className="muted p-4">{t("loading")}</p> : tables.map((tb) => <ReportTable key={tb.id} table={tb} lang={t.lang} empty={t("rp_nothing")} />)}
+      </section>
+
+      <div className="flex flex-wrap gap-4">
+        <section className="card min-w-0 flex-[2_1_420px] rounded-2xl px-5 py-4">
+          <div className="flex items-baseline justify-between gap-2">
+            <h2 className="text-lg font-semibold">{t("rp_top_products")}</h2>
+            <button onClick={onProducts} className="font-semibold text-brand hover:underline">{t("rp_all_products")}</button>
+          </div>
+          {top.length === 0 ? <p className="muted mt-3">{t("rp_no_sales")}</p> : (
+            <table className="mt-2 w-full text-sm" data-testid="rp-top">
+              <thead>
+                <tr>
+                  <th className="text-start">{t("rp_product")}</th>
+                  <th className="px-2 text-end">{t("rp_qty")}</th>
+                  <th className="px-2 text-end">{t("rp_net")}</th>
+                  <th className="text-end">{t("rp_food_cost")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {top.map((p) => (
+                  <tr key={p.product_id}>
+                    <td>
+                      <div className="font-semibold">{pickName(p.names ?? undefined, t.lang)}</div>
+                      <div className="mt-1 h-1.5 w-full rounded-full bg-[var(--panel-2)]"><div className="h-1.5 rounded-full bg-brand" style={{ width: `${(p.total_cents / topMax) * 100}%` }} /></div>
+                    </td>
+                    <td className="num px-2 text-end">{p.qty}</td>
+                    <td className="num whitespace-nowrap px-2 text-end">{m(p.total_cents)}</td>
+                    <td className="num text-end"><span dir="ltr">{p.food_cost_bp === null ? "—" : formatPercent(p.food_cost_bp, t.lang)}</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </section>
+
+        <section className="card flex min-w-0 flex-[1_1_280px] flex-col gap-4 rounded-2xl px-5 py-4">
+          <h2 className="text-lg font-semibold">{t("rp_breakdown")}</h2>
+          {splits.map((sp) => {
+            const total = sp.parts.reduce((s, x) => s + Math.max(0, x.value), 0);
+            const share = (v: number) => (total ? Math.round((Math.max(0, v) / total) * 100) : 0);
+            return (
+              <div key={sp.title}>
+                <div className="muted mb-1.5 text-xs font-bold">{sp.title}</div>
+                {!sp.parts.length ? <p className="muted text-sm">{t("rp_no_sales")}</p> : (
+                  <>
+                    <div className="flex h-3 overflow-hidden rounded-full bg-[var(--panel-2)]">
+                      {sp.parts.map((x, i) => <span key={x.label} style={{ width: `${share(x.value)}%`, background: COLORS[i % COLORS.length] }} />)}
+                    </div>
+                    {sp.parts.map((x, i) => (
+                      <div key={x.label} className="flex items-center gap-2 border-b line py-1.5 last:border-b-0">
+                        <span className="h-2.5 w-2.5 rounded-sm" style={{ background: COLORS[i % COLORS.length] }} />
+                        <span className="min-w-0 flex-1 truncate">{x.label}</span>
+                        <span className="num muted" dir="ltr">{share(x.value)} %</span>
+                        <b className="num w-28 text-end">{m(x.value)}</b>
+                      </div>
+                    ))}
+                  </>
+                )}
+              </div>
+            );
+          })}
+        </section>
+      </div>
     </>
   );
 }
 
+// ------------------------------------------------------------------ one section as a data grid
+
 function ReportTable({ table, lang, empty }: { table: Table; lang: Lang; empty: string }) {
   return (
-    <Card title={table.title}>
+    <Card>
       {table.rows.length === 0 ? (
         <p className="muted">{empty}</p>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm" data-report={table.id}>
-            <thead className="muted">
+            <thead>
               <tr>
                 {table.columns.map((c, i) => (
-                  <th key={i} className={`py-2 pe-3 font-medium ${c.num ? "text-end" : "text-start"}`}>{c.label}</th>
+                  <th key={i} className={`pe-3 ${c.num ? "text-end" : "text-start"}`}>{c.label}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {table.rows.map((r, i) => (
-                <tr key={i} className="border-t line">
+                <tr key={i}>
                   {r.map((c, j) => (
-                    <td key={j} className={`py-2 pe-3 ${isNum(c) ? "num text-end whitespace-nowrap" : ""}`}>{cellText(c, lang)}</td>
+                    <td key={j} className={`pe-3 ${isNum(c) ? "num whitespace-nowrap text-end" : ""}`}>{pctLtr(cellText(c, lang))}</td>
                   ))}
                 </tr>
               ))}
             </tbody>
             {table.total && (
               <tfoot>
-                <tr className="border-t-2 line font-semibold">
+                <tr className="border-t-2 line-strong font-semibold">
                   {table.total.map((c, j) => (
-                    <td key={j} className={`py-2 pe-3 ${isNum(c) ? "num text-end whitespace-nowrap" : ""}`}>{cellText(c, lang)}</td>
+                    <td key={j} className={`py-2.5 pe-3 ${isNum(c) ? "num whitespace-nowrap text-end" : ""}`}>{pctLtr(cellText(c, lang))}</td>
                   ))}
                 </tr>
               </tfoot>

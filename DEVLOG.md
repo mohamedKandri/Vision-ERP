@@ -985,3 +985,34 @@ Mocked up first (canvas "Cuisine · style B"), then built.
 
 ### Not verified
 - Not tried on the kitchen tablet or from across a real kitchen.
+
+## Reports in the "business" style (2026-11-23)
+
+Mocked up first (canvas "Rapports · style B"), then built.
+
+### Changed (`ReportsScreen.tsx`)
+- **One screen instead of the Today / Period tabs.**
+- **Period bar**: one button opens the periods (today, yesterday, this week, last 7 days,
+  this month, last month, last 30 days) and custom dates. Next to it: the period in full and
+  what it is compared with; Refresh, Export CSV, Export PDF.
+- **Comparison with the previous period of the same length** for any period (a second
+  `reports.summary` call). When the period ends today, the comparison stops at the same time
+  of day (as "yesterday at this time" did before).
+- **Section menu on the left**: Overview; Sales (summary, by day when there are several
+  days, by hour, product, category, type, payment, employee); Tax (VAT); Costs and losses
+  (food cost, discounts, voids, waste); Stock. A section shows just its table, as a data
+  grid with its total and note. The tables are the same `reportTables` used by the exports.
+- **Overview**: 5 figures with ▲/▼ against the previous period (net sales, orders, average
+  ticket, **food cost %**, discounts and refunds; for food cost and discounts, going up is
+  shown in red); the chart compares with the previous period (hours for one day, days for
+  longer); best sellers with a bar and food cost %; breakdown by payment and order type.
+- A period that includes today refreshes live, as before.
+- Arabic: percentages keep the "42,1 %" order; amounts are left as they were.
+
+### Verified
+- `tsc` clean, Vitest 108 pass.
+- The real app on the demo database, driven by a script (light, dark, Arabic; no page
+  errors): 5 figures with the comparison, best sellers, the VAT section shows its table,
+  "All products" opens the product table, the period picker applies "last 7 days" and the
+  chart switches to days, CSV export saved. The "by day" section only exists with sales on
+  more than one day; the demo database has sales on one day only, so that case wasn't seen.
