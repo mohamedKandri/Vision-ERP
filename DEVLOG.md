@@ -915,3 +915,36 @@ tables, apps with kanban) and chose **B**, the side menu with tables.
 ### Not verified
 - Not seen on the tablet yet (side menu width on a small screen).
 - New users still start in the dark theme (unchanged); each person can switch in My profile.
+
+## Till in the "business" style (2026-11-23)
+
+Mocked up first (canvas "Caisse · style B"), then built.
+
+### Changed (`PosScreen.tsx`)
+- **Two areas instead of three.** The right-hand pay column is gone, which gives the
+  products more room. The amount to pay, **Envoyer en cuisine** and a large **Encaisser**
+  are at the bottom of the order.
+- **Command bar above the products** instead of the dark bar at the bottom: Orders (with
+  the count of orders ready), Tables, New order | Discount, Hold, Split, Receipt | Void or
+  Refund (red). Under 1440 px wide, Discount, Hold, Split and Receipt show as icons with a
+  tooltip so the bar stays on one line.
+- **Products are cards**: full name (two lines), price ("from …" when there are sizes),
+  "Options" when a choice opens, a category-coloured top edge, greyed when out of stock.
+- **Categories are underlined tabs** with a coloured dot, plus a **product search** that
+  looks in every category (accents ignored).
+- **Order lines**: tapping a line selects it (blue mark, on the right in Arabic). −, +,
+  Note and Remove (or Void for a line already sent, which asks for a reason) act on it, for
+  new items and for unsent saved lines alike. The quantity buttons are no longer inside
+  every row.
+- The order type is one segmented control; the customer and loyalty strips sit under it.
+
+### Verified
+- `tsc` clean, Vitest 108 pass.
+- The real app on the demo database, driven by a script (8 checks, all pass, no page
+  errors): customer found by phone, burger cards, search finds Coca-Cola from another
+  category, line actions appear, + raises the quantity, send to kitchen, loyalty strip,
+  reward used (total 74,00 → 24,00 DH), a sent line offers Void, Pay opens the payment.
+  Looked at it in light, dark and Arabic.
+
+### Not verified
+- Not tried on the tablet's screen size yet.

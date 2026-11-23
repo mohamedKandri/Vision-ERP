@@ -1,4 +1,4 @@
-import { LayoutDashboard, Bell, Star, ChefHat, ClipboardList, Minus, Pause, Percent, Plus, Receipt, Scissors, Trash2, X } from "lucide-react";
+import { LayoutDashboard, Bell, Star, ChefHat, ClipboardList, Minus, Pause, Percent, Plus, Receipt, Scissors, Search, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import FloorScreen from "./FloorScreen";
 import { ItemConfigurator } from "../components/ItemConfigurator";
@@ -82,6 +82,9 @@ export function PosScreen({ me }: { me: SessionUser }) {
   const [draft, setDraft] = useState<Draft>({ type: "takeaway", table_id: null, customer_name: "", customer_phone: "", customer_address: "", delivery_fee_cents: null });
   const [configuring, setConfiguring] = useState<{ productId: number; editKey?: number; initial?: ItemConfig } | null>(null);
   const [sheet, setSheet] = useState<{ kind: "cart"; key: number } | { kind: "line"; id: number } | null>(null);
+  // The line tapped in the order: the −, +, Note and Remove buttons act on it.
+  const [sel, setSel] = useState<{ kind: "cart"; key: number } | { kind: "line"; id: number } | null>(null);
+  const [q, setQ] = useState("");
   const [dialog, setDialog] = useState<
     | null
     | { kind: "pay" }
@@ -191,6 +194,7 @@ export function PosScreen({ me }: { me: SessionUser }) {
   // -------------------------------------------------------------- actions
   const newOrder = () => {
     setFloorMode(true);
+    setSel(null);
     setOrder(null);
     setCart([]);
     setDraft({ type: "takeaway", table_id: null, customer_name: "", customer_phone: "", customer_address: "", delivery_fee_cents: null });
@@ -265,6 +269,7 @@ export function PosScreen({ me }: { me: SessionUser }) {
     try {
       const o = await rpc<Order>("orders.get", { id });
       setOrder(o);
+      setSel(null);
       setCart([]);
       setDraft({ type: o.type, table_id: o.table_id, customer_name: o.customer_name, customer_phone: o.customer_phone, customer_address: o.customer_address, delivery_fee_cents: o.delivery_fee_cents });
       setDialog(null);
@@ -297,7 +302,33 @@ export function PosScreen({ me }: { me: SessionUser }) {
   const locked = !!order;
   const editable = !order || !["closed", "voided"].includes(order.status);
   const canPay = (cart.length > 0 || (order && order.due_cents > 0) || (order && order.total_cents === 0 && order.payment_status !== "paid" && order.lines.some((l) => !l.voided))) && editable;
-  const products = ctx.menu.products.filter((p) => p.category_id === cat);
+  const norm = (x: string) => x.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const query = norm(q.trim());
+  const products = query
+    ? ctx.menu.products.filter((p) => Object.values(p.names).some((n) => typeof n === "string" && norm(n).includes(query)))
+    : ctx.menu.products.filter((p) => p.category_id === cat);
+  const selCart = sel?.kind === "cart" ? cart.find((c) => c.key === sel.key) : undefined;
+  const selLine = sel?.kind === "line" && editable ? order?.lines.find((l) => l.id === sel.id && !l.voided) : undefined;
+  const selUnsent = !!selCart || selLine?.kitchen_status === "new";
+  const selDec = () => {
+    if (selCart) setCart((x) => x.flatMap((y) => (y.key === selCart.key ? (y.qty > 1 ? [{ ...y, qty: y.qty - 1 }] : []) : [y])));
+    else if (selLine && selLine.qty > 1) call("orders.update_line", { line_id: selLine.id, qty: selLine.qty - 1 });
+  };
+  const selInc = () => {
+    if (selCart) setCart((x) => x.map((y) => (y.key === selCart.key ? { ...y, qty: y.qty + 1 } : y)));
+    else if (selLine) call("orders.update_line", { line_id: selLine.id, qty: selLine.qty + 1 });
+  };
+  const selNote = () => setSheet(selCart ? { kind: "cart", key: selCart.key } : selLine ? { kind: "line", id: selLine.id } : null);
+  const selRemove = async () => {
+    if (selCart) {
+      setCart((x) => x.filter((y) => y.key !== selCart.key));
+      setSel(null);
+    } else if (selLine) {
+      setSel(null);
+      if (selLine.kitchen_status === "new") await call("orders.remove_line", { line_id: selLine.id });
+      else setDialog({ kind: "void_line", id: selLine.id });
+    }
+  };
   const lineSel = sheet?.kind === "line" ? order?.lines.find((l) => l.id === sheet.id) : undefined;
   const cartSel = sheet?.kind === "cart" ? cart.find((c) => c.key === sheet.key) : undefined;
 
@@ -305,13 +336,16 @@ export function PosScreen({ me }: { me: SessionUser }) {
   const totalShown = cart.length ? estimate?.total ?? 0 : order?.total_cents ?? 0;
   const baseShown = cart.length ? estimate?.base ?? 0 : order?.base_cents ?? 0;
   const taxShown = cart.length ? estimate?.tax ?? 0 : order?.tax_cents ?? 0;
-  const fkey = "flex min-w-0 flex-1 items-center justify-center gap-2 px-2 text-[13px] font-semibold disabled:opacity-30 [&>svg]:h-4 [&>svg]:w-4 hover:bg-white/5";
+  // Command bar button (style B): icon in the accent colour, label, greyed when not possible.
+  const cmd = "flex min-h-11 shrink-0 items-center gap-1.5 rounded-md px-2 hov disabled:pointer-events-none disabled:opacity-35 [&>svg]:h-4 [&>svg]:w-4 [&>svg]:text-brand";
+  const due = order ? (cart.length ? totalShown - order.paid_cents : order.due_cents) : totalShown;
   const startOrder = (type: "takeaway" | "delivery" | "dine_in", table_id: number | null = null) => {
     setOrder(null);
     setCart([]);
     setDraft({ type, table_id, customer_name: "", customer_phone: "", customer_address: "", delivery_fee_cents: null });
     setDialog(null);
     setFloorMode(false);
+    setSel(null);
   };
 
   if (floorMode && ctx.tables.length > 0) {
@@ -345,101 +379,58 @@ export function PosScreen({ me }: { me: SessionUser }) {
       )}
       {ctx.happy_hour && <div className="bg-pink-600 px-4 py-1 text-center text-sm font-bold text-white">{t("pos_happy_hour")}</div>}
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-px bg-[var(--line)] lg:grid-cols-[400px_minmax(0,1fr)_280px]">
-        {/* ---------------- ticket (left) */}
-        <section aria-label={t("pos_receipt")} className="flex min-h-0 flex-col bg-[var(--panel)]">
-          <div className="flex items-center gap-2 border-b line px-3 py-2">
-            {ctx.tables.length > 0 && (
-              <button onClick={() => setFloorMode(true)} title={t("fl_tables")}
-                className="flex h-11 shrink-0 items-center gap-1.5 rounded-sm bg-brand px-3 text-[13px] font-semibold text-white">
-                <LayoutDashboard className="h-4 w-4" />{t("fl_tables")}
-              </button>
-            )}
-            <div className="min-w-0 flex-1">
-              <b className="num text-lg">{order ? `#${orderLabel(order)}` : t("pos_new_order")}</b>
-              <span className="muted ms-2 text-[13px]">
+      <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[400px_minmax(0,1fr)]">
+        {/* ---------------- order (left): who, lines, totals, pay */}
+        <section aria-label={t("pos_receipt")} className="flex min-h-0 flex-col border-e line bg-[var(--panel)]">
+          <div className="flex items-start justify-between gap-2 px-4 pb-2 pt-3">
+            <div className="min-w-0">
+              <div className="truncate text-xl font-semibold">
+                <span className="num">{order ? `#${orderLabel(order)}` : t("pos_new_order")}</span>
+                {draft.customer_name ? ` · ${draft.customer_name}` : ""}
+              </div>
+              <div className="muted truncate text-xs">
                 {t(`order_type_${order?.type ?? draft.type}` as Key)}
                 {draft.type === "dine_in" && draft.table_id ? ` · ${ctx.tables.find((x) => x.id === draft.table_id)?.name ?? ""}` : ""}
-                {draft.customer_name ? ` · ${draft.customer_name}` : ""}
-              </span>
-              {order && <div className="muted text-xs">{t(`status_${order.status}` as Key)} · {t(`pay_${order.payment_status}` as Key)}</div>}
+                {order ? ` · ${t(`status_${order.status}` as Key)} · ${t(`pay_${order.payment_status}` as Key)}` : ""}
+              </div>
             </div>
           </div>
           {!locked && (
-            <div className="flex flex-col gap-1.5 border-b line p-2">
-              <div className="grid grid-cols-3 gap-1">
+            <div className="flex flex-col gap-2 px-4 pb-2">
+              <div role="group" aria-label={t("pos_order_type")} className="flex overflow-hidden rounded-md border line-strong">
                 {types.map((ty) => (
-                  <button key={ty} onClick={() => setDraft({ ...draft, type: ty })}
-                    className={`h-10 rounded-sm border text-[13px] font-semibold ${draft.type === ty ? "border-brand bg-brand text-white" : "line bg-[var(--panel)]"}`}>
+                  <button key={ty} onClick={() => setDraft({ ...draft, type: ty })} aria-pressed={draft.type === ty}
+                    className={`min-h-11 flex-1 border-e line text-[13px] font-semibold last:border-e-0 ${draft.type === ty ? "sel text-brand shadow-[inset_0_-3px_0_var(--color-brand)]" : "hov"}`}>
                     {t(`order_type_${ty}` as Key)}
                   </button>
                 ))}
               </div>
               {draft.type === "dine_in" && (
-                <button className="h-10 rounded-sm border line px-3 text-start text-[13px]" onClick={() => setDialog({ kind: "tables" })}>
+                <button className="hov min-h-11 rounded-md border line-strong px-3 text-start text-[13px]" onClick={() => setDialog({ kind: "tables" })}>
                   {t("rc_table")}: <b>{ctx.tables.find((x) => x.id === draft.table_id)?.name ?? t("pos_no_table")}</b>
                 </button>
               )}
               {draft.type !== "dine_in" && (
-                <div className="grid grid-cols-2 gap-1">
-                  <TextInput className="!min-h-10" inputMode="tel" dir="ltr" placeholder={t("pos_customer_phone")} value={draft.customer_phone} onChange={(e) => setDraft({ ...draft, customer_phone: e.target.value })} />
-                  <TextInput className="!min-h-10" placeholder={t("pos_customer_name")} value={draft.customer_name} onChange={(e) => setDraft({ ...draft, customer_name: e.target.value })} />
+                <div className="grid grid-cols-2 gap-2">
+                  <TextInput className="!min-h-11" inputMode="tel" dir="ltr" placeholder={t("pos_customer_phone")} aria-label={t("pos_customer_phone")} value={draft.customer_phone} onChange={(e) => setDraft({ ...draft, customer_phone: e.target.value })} />
+                  <TextInput className="!min-h-11" placeholder={t("pos_customer_name")} aria-label={t("pos_customer_name")} value={draft.customer_name} onChange={(e) => setDraft({ ...draft, customer_name: e.target.value })} />
                 </div>
               )}
               {draft.type === "delivery" && (
-                <TextInput className="!min-h-10" placeholder={t("pos_customer_address")} value={draft.customer_address} onChange={(e) => setDraft({ ...draft, customer_address: e.target.value })} />
+                <TextInput className="!min-h-11" placeholder={t("pos_customer_address")} aria-label={t("pos_customer_address")} value={draft.customer_address} onChange={(e) => setDraft({ ...draft, customer_address: e.target.value })} />
               )}
               {draft.type !== "dine_in" && found && (
-                <div className="flex items-center gap-1.5 rounded-sm bg-amber-500/10 px-2 py-1 text-[13px]" data-testid="customer-chip">
-                  <Star className="h-3.5 w-3.5 shrink-0 text-amber-500" />
+                <div className="flex items-center gap-2 rounded-md bg-amber-500/12 px-3 py-2 text-[13px]" data-testid="customer-chip">
+                  <Star className="h-4 w-4 shrink-0 fill-amber-500 text-amber-500" />
                   <b className="truncate">{found.name || formatPhone(found.phone)}</b>
                   <span className="muted truncate">· {t("lo_n_orders", { n: found.orders })}{loyaltyMode !== "none" ? ` · ${loyaltyText(found.stamps, found.points)}` : ""}</span>
                 </div>
               )}
             </div>
           )}
-          <div className="label grid grid-cols-[44px_1fr_auto] gap-2 border-b line px-3 py-1.5">
-            <span>{t("pos_qty")}</span><span>{t("tab_products")}</span><span>{t("pos_total")}</span>
-          </div>
-          <div className="min-h-0 flex-1 overflow-auto">
-            {!order?.lines.length && !cart.length && <p className="muted p-6 text-center">{t("pos_empty_cart")}</p>}
-            {order?.lines.map((l) => (
-              <button key={l.id} disabled={!editable} onClick={() => setSheet({ kind: "line", id: l.id })}
-                className={`grid w-full grid-cols-[44px_1fr_auto] gap-2 border-b line px-3 py-2 text-start ${l.voided ? "opacity-40 line-through" : ""}`}>
-                <span className="num font-bold">{l.qty}</span>
-                <span className="min-w-0">
-                  <span className="font-semibold">{pickName(l.names, t.lang)}</span>
-                  {l.kitchen_status !== "new" && <ChefHat className="ms-1 inline h-3.5 w-3.5 text-emerald-500" aria-label={t("pos_lines_sent")} />}
-                  {(l.details[t.lang] ?? l.details.fr).map((d, i) => <span key={i} className="muted block text-xs">{d}</span>)}
-                  {l.note && <span className="block text-xs text-amber-600">{t("pos_note")}: {l.note}</span>}
-                  {l.discount_kind && <span className="block text-xs text-pink-600">{l.discount_kind === "comp" ? t("pos_comp") : l.discount_kind === "percent" ? `-${formatRate(l.discount_value ?? 0)}` : `-${m(l.discount_value ?? 0)}`}</span>}
-                </span>
-                <span className="font-bold" dir="ltr">{m(l.voided ? 0 : l.gross_cents)}</span>
-              </button>
-            ))}
-            {cart.length > 0 && order && <div className="label bg-brand/10 px-3 py-1">{t("pos_new_items")}</div>}
-            {cart.map((c) => {
-              const p = ix.product(c.config.product_id);
-              return (
-                <div key={c.key} className="sel grid grid-cols-[auto_1fr_auto] items-center gap-2 border-b line px-2 py-1.5">
-                  <div className="flex items-center" dir="ltr">
-                    <button aria-label="-" className="h-9 w-9 rounded-sm border line bg-[var(--panel)]" onClick={() => setCart((x) => x.flatMap((y) => (y.key === c.key ? (y.qty > 1 ? [{ ...y, qty: y.qty - 1 }] : []) : [y])))}><Minus className="mx-auto h-3.5 w-3.5" /></button>
-                    <span className="w-7 text-center font-bold">{c.qty}</span>
-                    <button aria-label="+" className="h-9 w-9 rounded-sm border line bg-[var(--panel)]" onClick={() => setCart((x) => x.map((y) => (y.key === c.key ? { ...y, qty: y.qty + 1 } : y)))}><Plus className="mx-auto h-3.5 w-3.5" /></button>
-                  </div>
-                  <button className="min-w-0 text-start" onClick={() => setSheet({ kind: "cart", key: c.key })}>
-                    <span className="font-semibold">{pickName(p.names, t.lang)}</span>
-                    {describe(ix, c.config, t.lang).map((d, i) => <span key={i} className="muted block text-xs">{d}</span>)}
-                    {c.note && <span className="block text-xs text-amber-600">{t("pos_note")}: {c.note}</span>}
-                  </button>
-                  <span className="font-bold" dir="ltr">{m(unitPrice(ix, c.config, ctx.happy_hour) * c.qty)}</span>
-                </div>
-              );
-            })}
-          </div>
           {order?.loyalty && (
-            <div className="flex items-center gap-2 border-t line bg-amber-500/10 px-3 py-1.5 text-[13px]" data-testid="loyalty-strip">
-              <Star className="h-4 w-4 shrink-0 text-amber-500" />
+            <div className="mx-4 mb-2 flex items-center gap-2 rounded-md bg-amber-500/12 px-3 py-1.5 text-[13px]" data-testid="loyalty-strip">
+              <Star className="h-4 w-4 shrink-0 fill-amber-500 text-amber-500" />
               <span className="min-w-0 flex-1 truncate">
                 <b>{order.loyalty.customer.name || formatPhone(order.loyalty.customer.phone)}</b>
                 {order.loyalty.mode !== "none" && <span className="muted"> · {loyaltyText(order.loyalty.stamps, order.loyalty.points)}</span>}
@@ -447,109 +438,169 @@ export function PosScreen({ me }: { me: SessionUser }) {
               {order.loyalty.redeemed ? (
                 <span className="shrink-0 font-semibold text-pink-600">{t("lo_reward_used")}</span>
               ) : order.loyalty.can_redeem && !cart.length ? (
-                <button className="h-9 shrink-0 rounded-sm bg-amber-500 px-3 font-semibold text-black"
+                <button className="min-h-9 shrink-0 rounded-md bg-amber-700 px-3 font-semibold text-white hover:bg-amber-800"
                   onClick={() => call("loyalty.redeem", { order_id: order.id }, t("lo_reward_applied"))}>
                   {order.loyalty.mode === "stamps" ? t("lo_use_reward") : t("lo_use_points", { n: order.loyalty.max_points, v: m(pointsValue(order.loyalty.max_points, order.loyalty.point_value_cents)) })}
                 </button>
               ) : null}
             </div>
           )}
-          <div className="border-t-2 border-[var(--text)] px-3 py-2">
-            <div className="muted flex justify-between text-[13px]"><span>HT</span><span dir="ltr">{m(baseShown)}</span></div>
-            <div className="muted flex justify-between text-[13px]"><span>{t("rc_vat")}</span><span dir="ltr">{m(taxShown)}</span></div>
-            {order?.discount_kind && (
-              <div className="flex justify-between text-[13px] text-pink-600">
-                <span>{order.loyalty?.redeemed ? t("lo_reward") : t("pos_discount")} {order.discount_kind === "percent" ? formatRate(order.discount_value ?? 0) : ""}</span>
-                <span dir="ltr">-{m(estimate?.order_discount ?? 0)}</span>
-              </div>
-            )}
-            {(order?.type ?? draft.type) === "delivery" && (
-              <div className="muted flex justify-between text-[13px]"><span>{t("rc_delivery_fee")}</span><span dir="ltr">{m(order ? order.delivery_fee_cents : draft.delivery_fee_cents ?? Number(s.delivery_fee_cents ?? 0))}</span></div>
-            )}
-            <div className="mt-1 flex items-baseline justify-between">
-              <span className="num text-xl font-bold">TOTAL{cart.length > 0 && order ? <span className="muted ms-1 text-xs font-normal">({t("pos_estimate")})</span> : null}</span>
-              <span className="text-3xl font-bold" dir="ltr">{m(totalShown)}</span>
-            </div>
+          <div className="grid grid-cols-[64px_1fr_auto] gap-2 border-b line-strong px-4 py-2 text-[13px] font-semibold muted">
+            <span>{t("pos_qty")}</span><span>{t("tab_products")}</span><span>{t("pos_total")}</span>
           </div>
-        </section>
-
-        {/* ---------------- products (center) */}
-        <section aria-label={t("tab_products")} className="flex min-h-0 flex-col bg-[var(--panel-2)]">
-          <div className="flex gap-1 overflow-x-auto border-b line bg-[var(--panel)] p-2">
-            {ctx.menu.categories.map((c, i) => (
-              <button key={c.id} onClick={() => setCat(c.id)}
-                className={`h-10 shrink-0 rounded-sm border px-3 text-[13px] font-semibold ${cat === c.id ? "border-brand bg-brand text-white" : "line bg-[var(--panel)]"}`}>
-                <span className="num me-1 opacity-60">{i + 1}</span>{pickName(c.names, t.lang)}
-              </button>
-            ))}
-          </div>
-          <div className="grid min-h-0 flex-1 auto-rows-min grid-cols-1 overflow-auto sm:grid-cols-2">
-            {products.map((p) => {
-              const c = ctx.menu.categories.find((x) => x.id === p.category_id);
-              const prices = p.variants.filter((v) => v.active).map((v) => (ctx.happy_hour && v.happy_hour_price_cents !== null ? v.happy_hour_price_cents : v.price_cents));
-              const price = prices.length ? Math.min(...prices) : ctx.happy_hour && p.happy_hour_price_cents !== null ? p.happy_hour_price_cents : p.price_cents;
+          <div className="min-h-0 flex-1 overflow-auto">
+            {!order?.lines.length && !cart.length && <p className="muted p-6 text-center">{t("pos_empty_cart")}</p>}
+            {order?.lines.map((l) => {
+              const on = sel?.kind === "line" && sel.id === l.id;
               return (
-                <button key={p.id} disabled={!p.available} onClick={() => addProduct(p)}
-                  className="grid h-14 grid-cols-[6px_1fr_auto] items-center gap-3 border-b border-e line bg-[var(--panel)] pe-3 text-start hover:bg-[var(--sel)] disabled:bg-[var(--panel-2)] disabled:text-[var(--muted)]">
-                  <span className="h-full" style={{ background: c?.color }} />
-                  <span className="min-w-0 truncate font-medium">
-                    {pickName(p.names, t.lang)}
-                    {(p.variants.some((v) => v.active) || p.kind === "combo") && <span className="muted ms-1 text-xs">…</span>}
+                <button key={l.id} disabled={!editable || l.voided} aria-pressed={on}
+                  onClick={() => setSel(on ? null : { kind: "line", id: l.id })}
+                  className={`grid w-full grid-cols-[64px_1fr_auto] gap-2 border-b line px-4 py-2.5 text-start ${on ? "sel sel-mark" : "hov"} ${l.voided ? "opacity-40 line-through" : ""}`}>
+                  <span className="num font-bold">{l.qty}</span>
+                  <span className="min-w-0">
+                    <span className="font-semibold">{pickName(l.names, t.lang)}</span>
+                    {l.kitchen_status !== "new" && <ChefHat className="ms-1 inline h-3.5 w-3.5 text-emerald-600" aria-label={t("pos_lines_sent")} />}
+                    {(l.details[t.lang] ?? l.details.fr).map((d, i) => <span key={i} className="muted block text-xs">{d}</span>)}
+                    {l.note && <span className="block text-xs text-amber-700 dark:text-amber-400">{t("pos_note")}: {l.note}</span>}
+                    {l.discount_kind && <span className="block text-xs text-pink-600">{l.discount_kind === "comp" ? t("pos_comp") : l.discount_kind === "percent" ? `-${formatRate(l.discount_value ?? 0)}` : `-${m(l.discount_value ?? 0)}`}</span>}
                   </span>
-                  {!p.available ? <span className="text-xs font-bold text-red-600">{t("out_of_stock")}</span> : (
-                    <span dir="ltr">{prices.length > 1 ? "≥ " : ""}{m(price)}</span>
-                  )}
+                  <span className="num" dir="ltr">{m(l.voided ? 0 : l.gross_cents)}</span>
+                </button>
+              );
+            })}
+            {cart.length > 0 && order && <div className="label bg-brand/10 px-4 py-1">{t("pos_new_items")}</div>}
+            {cart.map((c) => {
+              const p = ix.product(c.config.product_id);
+              const on = sel?.kind === "cart" && sel.key === c.key;
+              return (
+                <button key={c.key} aria-pressed={on} onClick={() => setSel(on ? null : { kind: "cart", key: c.key })}
+                  className={`grid w-full grid-cols-[64px_1fr_auto] gap-2 border-b line px-4 py-2.5 text-start ${on ? "sel sel-mark" : "hov"}`}>
+                  <span className="num font-bold">{c.qty}</span>
+                  <span className="min-w-0">
+                    <span className="font-semibold">{pickName(p.names, t.lang)}</span>
+                    {describe(ix, c.config, t.lang).map((d, i) => <span key={i} className="muted block text-xs">{d}</span>)}
+                    {c.note && <span className="block text-xs text-amber-700 dark:text-amber-400">{t("pos_note")}: {c.note}</span>}
+                  </span>
+                  <span className="num" dir="ltr">{m(unitPrice(ix, c.config, ctx.happy_hour) * c.qty)}</span>
                 </button>
               );
             })}
           </div>
-        </section>
-
-        {/* ---------------- right column: status + pay */}
-        <section className="flex min-h-0 flex-col gap-2 bg-[var(--panel)] p-3">
-          <div className="label">{t("pos_due")}</div>
-          <div className="text-4xl font-bold" dir="ltr">{m(order ? (cart.length ? totalShown - order.paid_cents : order.due_cents) : totalShown)}</div>
-          {order && order.paid_cents !== 0 && (
-            <div className="grid grid-cols-2 gap-px border line bg-[var(--line)]">
-              <div className="bg-[var(--panel-2)] p-2"><div className="label">{t("pos_paid")}</div><span className="font-bold" dir="ltr">{m(order.paid_cents)}</span></div>
-              <div className="bg-[var(--panel-2)] p-2"><div className="label">{t("rc_due")}</div><span className="font-bold text-amber-600" dir="ltr">{m(order.due_cents)}</span></div>
+          {(selCart || selLine) && (
+            <div className="flex items-center gap-1.5 border-t line px-4 py-2" data-testid="line-actions">
+              <span className="muted min-w-0 flex-1 truncate text-xs">{t("pos_selected_line")}</span>
+              {selUnsent && (
+                <>
+                  <button aria-label={t("pos_less")} title={t("pos_less")} onClick={selDec} className="hov flex h-10 w-11 items-center justify-center rounded-md border line-strong"><Minus className="h-4 w-4" /></button>
+                  <button aria-label={t("pos_more")} title={t("pos_more")} onClick={selInc} className="hov flex h-10 w-11 items-center justify-center rounded-md border line-strong"><Plus className="h-4 w-4" /></button>
+                </>
+              )}
+              <button onClick={selNote} className="hov h-10 rounded-md border line-strong px-3 text-[13px] font-semibold">{t("pos_note")}</button>
+              <button onClick={selRemove} className="hov h-10 rounded-md border line-strong px-3 text-[13px] font-semibold text-[#c50f1f] dark:text-red-400">{selUnsent ? t("pos_remove") : t("pos_void_line")}</button>
             </div>
           )}
-          <button onClick={() => setDialog({ kind: "orders" })} className="flex h-11 items-center justify-between rounded-sm border line px-3 text-[13px] font-semibold">
-            <span className="flex items-center gap-2"><ClipboardList className="h-4 w-4" />{t("pos_orders")}</span>
-            {readyCount > 0 && <span className="flex items-center gap-1 rounded-sm bg-emerald-600 px-2 py-0.5 text-xs font-bold text-white"><Bell className="h-3 w-3" />{readyCount}</span>}
-          </button>
-          {ctx.tables.length > 0 && (
-            <button onClick={() => setFloorMode(true)} className="flex h-11 items-center gap-2 rounded-sm border line px-3 text-[13px] font-semibold"><LayoutDashboard className="h-4 w-4" />{t("fl_tables")}</button>
-          )}
-          <button onClick={newOrder} className="flex h-11 items-center gap-2 rounded-sm border line px-3 text-[13px] font-semibold"><Plus className="h-4 w-4" />{t("pos_new_order")}</button>
-          <div className="flex-1" />
-          {order && order.status === "closed" ? (
-            <Button className="h-16" onClick={() => call("orders.reopen", { order_id: order.id }, t("pos_reopen"))}>{t("pos_reopen")}</Button>
-          ) : (
-            <>
-              <Button className="h-14" disabled={!cart.length || !editable} onClick={send}>
-                <ChefHat className="me-2 inline h-5 w-5" />{t("pos_send")}
-              </Button>
-              <Button variant="primary" className="h-20 text-xl" disabled={!canPay} onClick={startPay}>
-                {t("pos_pay").toUpperCase()}
-              </Button>
-            </>
-          )}
+          <div className="border-t line px-4 py-2 text-[13px] muted">
+            <div className="flex justify-between"><span>HT</span><span className="num" dir="ltr">{m(baseShown)}</span></div>
+            <div className="flex justify-between"><span>{t("rc_vat")}</span><span className="num" dir="ltr">{m(taxShown)}</span></div>
+            {order?.discount_kind && (
+              <div className="flex justify-between text-pink-600">
+                <span>{order.loyalty?.redeemed ? t("lo_reward") : t("pos_discount")} {order.discount_kind === "percent" ? formatRate(order.discount_value ?? 0) : ""}</span>
+                <span className="num" dir="ltr">-{m(estimate?.order_discount ?? 0)}</span>
+              </div>
+            )}
+            {(order?.type ?? draft.type) === "delivery" && (
+              <div className="flex justify-between"><span>{t("rc_delivery_fee")}</span><span className="num" dir="ltr">{m(order ? order.delivery_fee_cents : draft.delivery_fee_cents ?? Number(s.delivery_fee_cents ?? 0))}</span></div>
+            )}
+            <div className="flex justify-between"><span>{t("pos_total")}{cart.length > 0 && order ? ` (${t("pos_estimate")})` : ""}</span><span className="num" dir="ltr">{m(totalShown)}</span></div>
+            {order && order.paid_cents !== 0 && (
+              <div className="flex justify-between"><span>{t("pos_paid")}</span><span className="num" dir="ltr">{m(order.paid_cents)}</span></div>
+            )}
+          </div>
+          <div className="flex flex-col gap-2.5 px-4 pb-4 pt-1">
+            <div className="flex items-baseline justify-between gap-3">
+              <span className="text-base font-semibold">{t("pos_due")}</span>
+              <span className="num text-4xl font-bold" dir="ltr">{m(due)}</span>
+            </div>
+            {order && order.status === "closed" ? (
+              <Button className="h-16 w-full" onClick={() => call("orders.reopen", { order_id: order.id }, t("pos_reopen"))}>{t("pos_reopen")}</Button>
+            ) : (
+              <div className="flex gap-2">
+                <Button className="h-16 flex-1 !px-2 text-[15px]" disabled={!cart.length || !editable} onClick={send}>
+                  <ChefHat className="me-1.5 inline h-5 w-5" />{t("pos_send")}
+                </Button>
+                <Button variant="primary" className="h-16 flex-[1.2] text-lg" disabled={!canPay} onClick={startPay}>
+                  {t("pos_pay")}
+                </Button>
+              </div>
+            )}
+          </div>
         </section>
-      </div>
 
-      {/* ---------------- function bar */}
-      <div className="bar flex h-12 shrink-0 divide-x divide-white/10">
-        <button className={fkey} disabled={!order || !editable || !!cart.length} onClick={() => setDialog({ kind: "discount" })}><Percent />{t("pos_discount")}</button>
-        <button className={fkey} disabled={!editable || (!cart.length && !order)} onClick={() => setDialog({ kind: "hold" })}><Pause />{t("pos_hold")}</button>
-        <button className={fkey} disabled={!order || !editable || order.paid_cents !== 0 || !!cart.length || order.lines.filter((l) => !l.voided).length < 1} onClick={() => setDialog({ kind: "split" })}><Scissors />{t("pos_split")}</button>
-        <button className={fkey} disabled={!order} onClick={() => setDialog({ kind: "receipt", reprint: !!order?.paid_at })}><Receipt />{t("pos_receipt")}</button>
-        {order && order.paid_cents > 0 ? (
-          <button className={`${fkey} text-red-400`} onClick={() => setDialog({ kind: "refund" })}><X />{t("pos_refund")}</button>
-        ) : (
-          <button className={`${fkey} text-red-400`} disabled={!order || !editable} onClick={() => setDialog({ kind: "void" })}><Trash2 />{t("pos_void_order")}</button>
-        )}
+        {/* ---------------- products (right): commands, categories, product cards */}
+        <section aria-label={t("tab_products")} className="flex min-h-0 flex-col">
+          <div role="toolbar" aria-label={t("pos_orders")} className="flex shrink-0 flex-wrap items-center gap-0.5 border-b line bg-[var(--panel)] px-2 py-1 text-[13px]">
+            <button className={cmd} onClick={() => setDialog({ kind: "orders" })}>
+              <ClipboardList />{t("pos_orders")}
+              {readyCount > 0 && <span className="flex items-center gap-1 rounded-full bg-[#0e700e] px-1.5 text-xs font-bold text-white"><Bell className="h-3 w-3" />{readyCount}</span>}
+            </button>
+            {ctx.tables.length > 0 && <button className={cmd} onClick={() => setFloorMode(true)}><LayoutDashboard />{t("fl_tables")}</button>}
+            <button className={cmd} onClick={newOrder}><Plus />{t("pos_new_order")}</button>
+            <span aria-hidden="true" className="mx-0.5 h-6 w-px shrink-0 bg-[var(--line)]" />
+            <button className={cmd} title={t("pos_discount")} aria-label={t("pos_discount")} disabled={!order || !editable || !!cart.length} onClick={() => setDialog({ kind: "discount" })}><Percent /><span className="hidden min-[1440px]:inline">{t("pos_discount")}</span></button>
+            <button className={cmd} title={t("pos_hold")} aria-label={t("pos_hold")} disabled={!editable || (!cart.length && !order)} onClick={() => setDialog({ kind: "hold" })}><Pause /><span className="hidden min-[1440px]:inline">{t("pos_hold")}</span></button>
+            <button className={cmd} title={t("pos_split")} aria-label={t("pos_split")} disabled={!order || !editable || order.paid_cents !== 0 || !!cart.length || order.lines.filter((l) => !l.voided).length < 1} onClick={() => setDialog({ kind: "split" })}><Scissors /><span className="hidden min-[1440px]:inline">{t("pos_split")}</span></button>
+            <button className={cmd} title={t("pos_receipt")} aria-label={t("pos_receipt")} disabled={!order} onClick={() => setDialog({ kind: "receipt", reprint: !!order?.paid_at })}><Receipt /><span className="hidden min-[1440px]:inline">{t("pos_receipt")}</span></button>
+            <span aria-hidden="true" className="mx-0.5 h-6 w-px shrink-0 bg-[var(--line)]" />
+            {order && order.paid_cents > 0 ? (
+              <button className={`${cmd} text-[#c50f1f] dark:text-red-400 [&>svg]:!text-current`} onClick={() => setDialog({ kind: "refund" })}><X />{t("pos_refund")}</button>
+            ) : (
+              <button className={`${cmd} text-[#c50f1f] dark:text-red-400 [&>svg]:!text-current`} disabled={!order || !editable} onClick={() => setDialog({ kind: "void" })}><Trash2 />{t("pos_void_order")}</button>
+            )}
+          </div>
+          <div className="flex shrink-0 flex-wrap items-end gap-x-3 border-b line bg-[var(--panel)] px-3">
+            <div role="tablist" className="flex min-w-0 flex-1 gap-0.5 overflow-x-auto">
+              {ctx.menu.categories.map((c) => {
+                const on = !query && cat === c.id;
+                return (
+                  <button key={c.id} role="tab" aria-selected={on} onClick={() => { setCat(c.id); setQ(""); }}
+                    className={`flex min-h-12 shrink-0 items-center gap-2 px-3 ${on ? "font-semibold shadow-[inset_0_-3px_0_var(--color-brand)]" : "muted hov"}`}>
+                    <span aria-hidden="true" className="h-2.5 w-2.5 rounded-full" style={{ background: c.color }} />
+                    {pickName(c.names, t.lang)}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="relative mb-1.5 w-56 max-w-full">
+              <Search className="muted pointer-events-none absolute start-2.5 top-1/2 h-4 w-4 -translate-y-1/2" />
+              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("pos_search_product")} aria-label={t("pos_search_product")}
+                className="h-9 w-full rounded-md border line-strong border-b-[var(--input-bottom)] bg-[var(--panel)] ps-8 pe-2 outline-none focus:border-b-brand" />
+            </div>
+          </div>
+          <div className="grid min-h-0 flex-1 auto-rows-min grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-2.5 overflow-auto p-3 sm:p-4">
+            {products.map((p) => {
+              const c = ctx.menu.categories.find((x) => x.id === p.category_id);
+              const prices = p.variants.filter((v) => v.active).map((v) => (ctx.happy_hour && v.happy_hour_price_cents !== null ? v.happy_hour_price_cents : v.price_cents));
+              const price = prices.length ? Math.min(...prices) : ctx.happy_hour && p.happy_hour_price_cents !== null ? p.happy_hour_price_cents : p.price_cents;
+              const options = p.kind === "combo" || prices.length > 1 || ix.groupsOf(p).length > 0;
+              return (
+                <button key={p.id} disabled={!p.available} onClick={() => addProduct(p)}
+                  className="card flex min-h-24 flex-col justify-between gap-2 rounded-2xl p-3 text-start transition hover:brightness-[.97] active:scale-[.98] disabled:bg-[var(--panel-2)] disabled:text-[var(--muted)] dark:hover:brightness-110"
+                  style={{ boxShadow: `var(--shadow), inset 0 4px 0 ${p.available ? c?.color ?? "transparent" : "var(--line-strong)"}` }}>
+                  <span className="line-clamp-2 font-semibold leading-snug">{pickName(p.names, t.lang)}</span>
+                  <span className="flex w-full items-end justify-between gap-2">
+                    {!p.available ? (
+                      <span className="text-xs font-bold text-[#c50f1f] dark:text-red-400">{t("out_of_stock")}</span>
+                    ) : (
+                      <span className="muted text-xs">{options ? t("pos_options") : ""}</span>
+                    )}
+                    <span className="num font-semibold" dir="ltr">{prices.length > 1 ? t("pos_from", { v: m(price) }) : m(price)}</span>
+                  </span>
+                </button>
+              );
+            })}
+            {!products.length && <p className="muted col-span-full p-6 text-center">—</p>}
+          </div>
+        </section>
       </div>
 
       {/* ---------------- dialogs */}

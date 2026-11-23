@@ -101,3 +101,6 @@ main tbody td { padding-top: 8px; padding-bottom: 8px; }
 main th:first-child, main td:first-child { padding-inline-start: 8px; }
 .no-scrollbar { scrollbar-width: none; }
 .no-scrollbar::-webkit-scrollbar { display: none; }
+/* Selected row: accent bar on the reading-start side. */
+.sel-mark { box-shadow: inset 3px 0 0 var(--color-brand); }
+[dir="rtl"] .sel-mark { box-shadow: inset -3px 0 0 var(--color-brand); }
