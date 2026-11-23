@@ -57,7 +57,7 @@ const KEYS: &[(&str, Kind)] = &[
 
 pub fn defaults() -> Map<String, Value> {
     let v = json!({
-        "shop_name": "BURGER OS",
+        "shop_name": "Vision",
         "shop_address": "",
         "shop_phone": "",
         "shop_ice": "",
@@ -197,7 +197,7 @@ mod tests {
         m.insert("shop_name".into(), json!("X"));
         m.insert("kds_warn_minutes".into(), json!("seven"));
         assert!(set_many(&c, &m).is_err());
-        assert_eq!(get(&c, "shop_name").unwrap(), json!("BURGER OS"), "nothing written on error");
+        assert_eq!(get(&c, "shop_name").unwrap(), json!("Vision"), "nothing written on error");
 
         let mut m = Map::new();
         m.insert("hack".into(), json!(1));

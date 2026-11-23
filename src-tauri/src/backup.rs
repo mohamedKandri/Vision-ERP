@@ -93,7 +93,7 @@ pub fn check_file(path: &Path) -> ApiResult<i64> {
     let version: Option<i64> = c
         .query_row("SELECT MAX(version) FROM schema_migrations", [], |r| r.get(0))
         .optional()
-        .map_err(|_| ApiError::new("bad_backup", "not a BURGER OS database"))?
+        .map_err(|_| ApiError::new("bad_backup", "not a Vision database"))?
         .flatten();
     let has_core: bool = c
         .query_row("SELECT COUNT(*) = 3 FROM sqlite_master WHERE type='table' AND name IN ('users','orders','settings')", [], |r| r.get(0))
@@ -109,11 +109,11 @@ pub fn check_file(path: &Path) -> ApiResult<i64> {
     match version {
         Some(v) if has_core && v >= 1 => {
             if v > db::MIGRATIONS.last().map(|m| m.version).unwrap_or(0) {
-                return Err(ApiError::new("bad_backup", "this backup comes from a newer version of BURGER OS"));
+                return Err(ApiError::new("bad_backup", "this backup comes from a newer version of Vision"));
             }
             Ok(v)
         }
-        _ => Err(ApiError::new("bad_backup", "not a BURGER OS database")),
+        _ => Err(ApiError::new("bad_backup", "not a Vision database")),
     }
 }
 

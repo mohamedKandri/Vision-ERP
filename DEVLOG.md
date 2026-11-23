@@ -1016,3 +1016,16 @@ Mocked up first (canvas "Rapports · style B"), then built.
   "All products" opens the product table, the period picker applies "last 7 days" and the
   chart switches to days, CSV export saved. The "by day" section only exists with sales on
   more than one day; the demo database has sales on one day only, so that case wasn't seen.
+
+## The app is now called "Vision" (2026-11-23)
+
+- Changed everywhere a person sees the name: top bar, login, welcome screen, window
+  title, page title, Windows installer (`Vision_<version>_x64-setup.exe`, Start menu
+  "Vision"), Android app name, backup error messages, the Windows print-job name, the
+  printer test page, the default shop name for a new install, README.
+- **Kept on purpose** (changing them would cut the app off from its data or updates): the
+  app identifier `ma.burgeros.app` (data folder `%APPDATA%\ma.burgeros.app`, Android
+  package), the database file `burger-os.db`, the `Downloads\BURGER-OS` folder for exports
+  and backups, the `burger-os` program and crate names, the receipt QR prefix.
+- Verified: Rust 126 pass, Vitest 108 pass, `tsc` clean; the demo shows "Vision" on the
+  login screen, the top bar and the window title.

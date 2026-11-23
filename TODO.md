@@ -1,4 +1,4 @@
-# BURGER OS: what's left
+# Vision: what's left
 
 Status on 2026-11-23: all 9 phases are built and committed. This list comes from the spec
 and from the "Not verified / known issues" notes in `DEVLOG.md`.

@@ -567,7 +567,7 @@ pub fn test_doc(p: &Printer, shop: &str) -> Vec<Line> {
         Line::Row { left: "1 x Classic Burger".into(), right: "45,00 DH".into(), bold: Some(true), big: None },
         Line::Row { left: "TOTAL TTC".into(), right: "45,00 DH".into(), bold: Some(true), big: Some(true) },
         Line::Rule,
-        Line::Qr { data: "BURGER OS TEST".into() },
+        Line::Qr { data: "VISION TEST".into() },
         t("OK", Align::Center, true, true),
     ]
 }
@@ -620,7 +620,7 @@ pub mod spooler {
             if OpenPrinterW(name.as_ptr(), &mut h, std::ptr::null()) == 0 {
                 return Err(format!("open printer '{printer}': error {}", GetLastError()));
             }
-            let mut doc_name = wide("BURGER OS");
+            let mut doc_name = wide("Vision");
             let mut datatype = wide("RAW");
             let info = DOC_INFO_1W { pDocName: doc_name.as_mut_ptr(), pOutputFile: std::ptr::null_mut(), pDatatype: datatype.as_mut_ptr() };
             let result = (|| {

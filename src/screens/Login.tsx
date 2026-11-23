@@ -55,7 +55,7 @@ export function Login({ shopName, lang, onLogin }: { shopName: string; lang: Lan
   return (
     <div className="flex h-full flex-col">
       <header className="bar flex h-9 shrink-0 items-center gap-5 px-3 text-[13px]">
-        <b className="num text-white">BURGER/OS</b>
+        <b className="text-white">Vision</b>
         <span>{shopName}</span>
         <div className="flex-1" />
         <span className="num">{new Date().toLocaleDateString()}</span>

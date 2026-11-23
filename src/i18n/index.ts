@@ -2,7 +2,7 @@ import { createContext, useContext } from "react";
 import type { Lang } from "../lib/rpc";
 
 const fr = {
-  app_name: "BURGER OS",
+  app_name: "Vision",
   loading: "Chargement…",
   save: "Enregistrer",
   saved: "Enregistré",
@@ -17,7 +17,7 @@ const fr = {
   name: "Nom",
   back: "Retour",
   // setup
-  setup_title: "Bienvenue sur BURGER OS",
+  setup_title: "Bienvenue sur Vision",
   setup_sub: "Configuration du premier appareil (Hôte). Les données restent sur cet appareil.",
   shop_name: "Nom du restaurant",
   owner_name: "Nom du propriétaire",
@@ -848,7 +848,7 @@ const fr = {
   bk_restore_warn: "Toutes les données actuelles seront remplacées par celles de cette sauvegarde ({d}). Tout le monde devra se reconnecter.",
   bk_restore_safety: "Une sauvegarde « Avant restauration » des données actuelles est faite d'abord : vous pouvez revenir en arrière.",
   bk_restore_confirm: "Remplacer les données",
-  err_bad_backup: "Ce fichier n'est pas une sauvegarde BURGER OS valide",
+  err_bad_backup: "Ce fichier n'est pas une sauvegarde Vision valide",
   err_backup_failed: "La sauvegarde a échoué",
   err_restore_failed: "La restauration a échoué",
 };
@@ -857,7 +857,7 @@ export type Key = keyof typeof fr;
 type Dict = Record<Key, string>;
 
 const en: Dict = {
-  app_name: "BURGER OS",
+  app_name: "Vision",
   loading: "Loading…",
   save: "Save",
   saved: "Saved",
@@ -871,7 +871,7 @@ const en: Dict = {
   inactive: "Inactive",
   name: "Name",
   back: "Back",
-  setup_title: "Welcome to BURGER OS",
+  setup_title: "Welcome to Vision",
   setup_sub: "First device setup (Host). Your data stays on this device.",
   shop_name: "Restaurant name",
   owner_name: "Owner name",
@@ -1693,13 +1693,13 @@ const en: Dict = {
   bk_restore_warn: "All current data will be replaced by this backup's ({d}). Everyone will have to log in again.",
   bk_restore_safety: "A \"Before restore\" backup of the current data is made first: you can go back.",
   bk_restore_confirm: "Replace the data",
-  err_bad_backup: "This file is not a valid BURGER OS backup",
+  err_bad_backup: "This file is not a valid Vision backup",
   err_backup_failed: "The backup failed",
   err_restore_failed: "The restore failed",
 };
 
 const ar: Dict = {
-  app_name: "BURGER OS",
+  app_name: "Vision",
   loading: "جارٍ التحميل…",
   save: "حفظ",
   saved: "تم الحفظ",
@@ -1713,7 +1713,7 @@ const ar: Dict = {
   inactive: "غير نشط",
   name: "الاسم",
   back: "رجوع",
-  setup_title: "مرحبًا بك في BURGER OS",
+  setup_title: "مرحبًا بك في Vision",
   setup_sub: "إعداد الجهاز الأول (المضيف). تبقى بياناتك على هذا الجهاز.",
   shop_name: "اسم المطعم",
   owner_name: "اسم المالك",
@@ -2535,7 +2535,7 @@ const ar: Dict = {
   bk_restore_warn: "ستُستبدل كل البيانات الحالية ببيانات هذه النسخة ({d}). سيتعين على الجميع تسجيل الدخول من جديد.",
   bk_restore_safety: "تُنشأ أولًا نسخة «قبل الاسترجاع» من البيانات الحالية: يمكنك التراجع.",
   bk_restore_confirm: "استبدال البيانات",
-  err_bad_backup: "هذا الملف ليس نسخة احتياطية صالحة لـ BURGER OS",
+  err_bad_backup: "هذا الملف ليس نسخة احتياطية صالحة لـ Vision",
   err_backup_failed: "فشل النسخ الاحتياطي",
   err_restore_failed: "فشل الاسترجاع",
 };

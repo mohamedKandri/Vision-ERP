@@ -91,7 +91,7 @@ export default function App() {
       })
       .then(setStatus, (e) => {
         // A Client whose Host is unreachable still starts: show the offline login.
-        if ((e as { code?: string })?.code === "offline") setStatus({ setup_done: true, shop_name: "BURGER OS", default_language: "fr", version: "" });
+        if ((e as { code?: string })?.code === "offline") setStatus({ setup_done: true, shop_name: "Vision", default_language: "fr", version: "" });
         else setFatal(errorText("fr", e));
       });
   }, []);
@@ -434,7 +434,7 @@ function StatusBar({ user, version, app, onHome, onSearch, onMe, onLock }: {
       <button onClick={onHome} aria-label={t("home")} title={t("home")} className="flex h-12 w-14 shrink-0 items-center justify-center hover:bg-white/10">
         <LayoutGrid className="h-5 w-5" />
       </button>
-      <b className="shrink-0 text-[15px] font-semibold">BURGER OS</b>
+      <b className="shrink-0 text-[15px] font-semibold">Vision</b>
       {app && (
         <>
           <span className="opacity-50" aria-hidden="true">|</span>

@@ -623,7 +623,7 @@ pub fn dispatch(core: &Core, token: Option<&str>, method: &str, params: Value) -
         "printers.test" => {
             require(&me, "settings.manage")?;
             let printer = printing::load_printer(&conn, p::<IdP>(params)?.id)?;
-            let shop = settings::get(&conn, "shop_name")?.as_str().unwrap_or("BURGER OS").to_string();
+            let shop = settings::get(&conn, "shop_name")?.as_str().unwrap_or("Vision").to_string();
             let job = printing::enqueue(&conn, printer.id, "test", None, None, "test", &printing::test_doc(&printer, &shop), Some(me.id))?;
             Ok(json!({ "job_id": job }))
         }

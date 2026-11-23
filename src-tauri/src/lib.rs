@@ -300,7 +300,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![rpc])
         .run(tauri::generate_context!())
-        .expect("error while running BURGER OS");
+        .expect("error while running Vision");
 }
 
 #[cfg(test)]

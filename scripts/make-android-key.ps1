@@ -1,4 +1,4 @@
-# Creates the Android release signing key for BURGER OS. Run it ONCE, yourself.
+# Creates the Android release signing key for Vision. Run it ONCE, yourself.
 #
 #   powershell -ExecutionPolicy Bypass -File scripts\make-android-key.ps1
 #
@@ -28,7 +28,7 @@ $again = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServ
 if ($plain -ne $again) { throw "The passwords don't match." }
 if ($plain.Length -lt 8) { throw "Use at least 8 characters." }
 $shop = Read-Host "Shop name (goes in the certificate, e.g. Burger Lab Casa)"
-if (-not $shop) { $shop = "BURGER OS" }
+if (-not $shop) { $shop = "Vision" }
 
 & $keytool -genkeypair -v -keystore $jks -alias burger-os -keyalg RSA -keysize 3072 -validity 10000 `
   -storepass $plain -keypass $plain -dname "CN=$shop, O=$shop, C=MA"

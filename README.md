@@ -1,6 +1,6 @@
-# BURGER OS
+# Vision
 
-A local-first POS + back office for one burger shop. It runs 100 % offline on Android
+Vision (code name BURGER OS) is a local-first POS + back office for one burger shop. It runs 100 % offline on Android
 POS terminals/tablets and on a Windows PC. There's no cloud, no account and no telemetry.
 
 > **Status: all 9 phases built.** Setup, PIN login, staff, roles and permissions; the menu
@@ -12,10 +12,10 @@ POS terminals/tablets and on a Windows PC. There's no cloud, no account and no t
 ## Install
 
 ### Windows (back-office PC)
-1. Run `BURGER OS_0.1.0_x64-setup.exe` (from `src-tauri/target/release/bundle/nsis/`).
+1. Run `Vision_0.1.0_x64-setup.exe` (from `src-tauri/target/release/bundle/nsis/`).
    The installer isn't code-signed, so Windows SmartScreen may say "Windows protected your PC":
    click **More info → Run anyway**.
-2. Start **BURGER OS** from the Start menu.
+2. Start **Vision** from the Start menu.
 
 The database is stored at `%APPDATA%\ma.burgeros.app\burger-os.db`.
 
@@ -27,7 +27,7 @@ Android app" below).
    adb install -r release/burger-os-0.1.0-arm64-v8a.apk
    ```
 2. If you copy the file instead, allow "Install unknown apps" for your file manager once.
-3. Open **BURGER OS**.
+3. Open **Vision**.
 
 ## First start
 
@@ -107,7 +107,7 @@ per-line rounding or global rounding per tax.
 4. Staff log in with their usual PINs. A kitchen screen opens straight on the kitchen view;
    a customer screen shows the Preparing/Ready board.
 
-On Windows, allow BURGER OS through the firewall when asked, so the tablets can reach it.
+On Windows, allow Vision through the firewall when asked, so the tablets can reach it.
 In Appareil on the Host, **Retirer** disconnects a lost or stolen device.
 
 **When the Wi-Fi drops:**

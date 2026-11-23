@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "BURGER OS",
+  "productName": "Vision",
   "version": "0.1.0",
   "identifier": "ma.burgeros.app",
   "build": {
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "BURGER OS",
+        "title": "Vision",
         "width": 1280,
         "height": 800,
         "minWidth": 800,
