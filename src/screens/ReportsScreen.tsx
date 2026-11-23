@@ -157,7 +157,7 @@ function HourChart({ hours, lang }: { hours: Report["by_hour"]; lang: Lang }) {
                 </span>
               )}
               <span
-                className={`mx-auto block w-3/4 max-w-12 rounded-t ${hover === h.hour ? "bg-amber-400" : "bg-amber-500"}`}
+                className={`mx-auto block w-3/4 max-w-12 rounded-t ${hover === h.hour ? "bg-brand-strong" : "bg-brand"}`}
                 style={{ height: `${pct * 100}%`, minHeight: h.total_cents > 0 ? 2 : 0 }}
               />
             </button>

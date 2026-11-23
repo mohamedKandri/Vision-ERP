@@ -884,3 +884,34 @@ can see the print queue and retry a failed print; a cashier can look a customer 
 - The network test (`lan_test`) is timing-sensitive: once in this phase it timed out when two
   test runs overlapped on this PC; it passes on its own and in the normal full run.
 - Your desktop app was not updated in this phase (see TODO.md).
+
+## New look: "business" style (style B), 2026-11-23
+
+The owner compared three mockups inspired by well-known ERPs (tile launchpad, side menu with
+tables, apps with kanban) and chose **B**, the side menu with tables.
+
+### Changed
+- **Colours and font** (`src/styles.css`): light grey ground with white cards and a soft
+  shadow, dark navy top bar, one blue accent (#0f6cbd), small corners. Windows' own font
+  (Segoe UI; Roboto on Android). Numbers keep equal-width digits but no longer use the mono
+  font. A dark theme with the same layout. IBM Plex stays bundled (the PDF export uses it).
+- **Top bar**: home button, "BURGER OS | app name", search, register, connection, clock, a
+  user button (initials, name, role; opens My profile) and lock.
+- **Side menu** on every screen, grouped Sales / Menu and stock / Analysis / Administration.
+  It folds into a rail of icons (button at the top; the choice is remembered on the device)
+  and folds by itself on the till, kitchen and floor screens, which need the width. It is on
+  the right in Arabic.
+- **Home**: the same groups as tiles.
+- **Shared parts** (`ui.tsx`): buttons (white with a grey border, or blue), inputs (white,
+  darker bottom edge, blue underline when focused), switches, cards, dialogs, tabs
+  (underlined), messages. Every table gets the same header, row lines and hover.
+- Reports: the hour chart uses the accent colour.
+
+### Verified
+- `tsc` clean, Vitest 108 pass, production build OK. No Rust changes.
+- Looked at it in the real app on the demo database (light, dark, Arabic): home, till (floor
+  and takeaway order), stock, menu, clients, reports, settings. No page errors.
+
+### Not verified
+- Not seen on the tablet yet (side menu width on a small screen).
+- New users still start in the dark theme (unchanged); each person can switch in My profile.

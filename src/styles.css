@@ -1,4 +1,5 @@
 @import "tailwindcss";
+/* Plex stays bundled: the PDF export draws with it, and it is the offline fallback. */
 @import "@fontsource/ibm-plex-sans/400.css";
 @import "@fontsource/ibm-plex-sans/500.css";
 @import "@fontsource/ibm-plex-sans/600.css";
@@ -7,11 +8,12 @@
 @import "@fontsource/jetbrains-mono/700.css";
 @custom-variant dark (&:where(.dark, .dark *));
 
-/* Console design: dense, square, blue accent. Fonts are bundled (works offline). */
+/* "Business" design (style B): dark top bar, grouped side menu, white cards on a light
+   grey ground, command bars and data tables. Small radii, one blue accent. */
 @theme {
-  --color-brand: #1d4ed8;
-  --color-brand-strong: #1e3a8a;
-  --radius-lg: 3px;
+  --color-brand: #0f6cbd;
+  --color-brand-strong: #0f548c;
+  --radius-lg: 4px;
   --radius-xl: 4px;
   --radius-2xl: 6px;
   --radius-3xl: 8px;
@@ -19,52 +21,83 @@
 }
 
 :root {
-  --bg: #e9ebef;
+  --bg: #f5f5f5;
   --panel: #ffffff;
-  --panel-2: #f6f7f9;
-  --text: #111827;
-  --muted: #6b7280;
-  --line: #cbd0d8;
-  --bar: #111827;
-  --bar-2: #1f2937;
-  --bar-text: #e5e7eb;
-  --sel: #dbeafe;
+  --panel-2: #fafafa;
+  --text: #242424;
+  --muted: #616161;
+  --line: #e0e0e0;
+  --line-strong: #d1d1d1;
+  --input-bottom: #616161;
+  --bar: #0b2a4a;
+  --bar-2: #0f3a63;
+  --bar-text: #ffffff;
+  --nav: #ebebeb;
+  --nav-sel: #ffffff;
+  --hover: rgba(0, 0, 0, .05);
+  --sel: #ebf3fc;
+  --shadow: 0 0 2px rgba(0, 0, 0, .12), 0 2px 4px rgba(0, 0, 0, .14);
 }
 .dark {
-  --color-brand: #2563eb;
-  --color-brand-strong: #1d4ed8;
-  --bg: #0a0d12;
-  --panel: #0f141b;
-  --panel-2: #111827;
-  --text: #e5e7eb;
-  --muted: #9ca3af;
-  --line: #273244;
-  --bar: #000000;
-  --bar-2: #111827;
-  --bar-text: #e5e7eb;
-  --sel: #111c33;
+  --color-brand: #0f6cbd;
+  --color-brand-strong: #115ea3;
+  --bg: #1b1b1b;
+  --panel: #292929;
+  --panel-2: #242424;
+  --text: #ffffff;
+  --muted: #adadad;
+  --line: #3d3d3d;
+  --line-strong: #525252;
+  --input-bottom: #adadad;
+  --bar: #0a1f36;
+  --bar-2: #0f2d4d;
+  --bar-text: #ffffff;
+  --nav: #222222;
+  --nav-sel: #333333;
+  --hover: rgba(255, 255, 255, .06);
+  --sel: #0e2a47;
+  --shadow: 0 0 2px rgba(0, 0, 0, .5), 0 2px 4px rgba(0, 0, 0, .5);
 }
 html, body, #root { height: 100%; }
 body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font-family: "IBM Plex Sans", system-ui, "Segoe UI", Roboto, "Noto Sans Arabic", Tahoma, sans-serif;
+  font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, Roboto, "IBM Plex Sans", "Noto Sans Arabic", Tahoma, sans-serif;
   font-size: 14px;
   -webkit-tap-highlight-color: transparent;
   user-select: none;
   overscroll-behavior: none;
 }
 input, textarea, select { user-select: text; }
-/* Amounts, order numbers, codes and keypads use the mono face. */
-.num, span[dir="ltr"], div[dir="ltr"], b[dir="ltr"] { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+/* Amounts, order numbers and codes: same font, digits of equal width so columns line up. */
+.num, span[dir="ltr"], div[dir="ltr"], b[dir="ltr"] { font-variant-numeric: tabular-nums; }
 .panel { background: var(--panel); border: 1px solid var(--line); }
 .panel-2 { background: var(--panel-2); }
+.card { background: var(--panel); box-shadow: var(--shadow); }
 .muted { color: var(--muted); }
 .line { border-color: var(--line); }
+.line-strong { border-color: var(--line-strong); }
 .bar { background: var(--bar); color: var(--bar-text); }
 .bar-2 { background: var(--bar-2); color: var(--bar-text); }
 .sel { background: var(--sel); }
-.label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
-/* Letter spacing pulls joined Arabic letters apart. */
-[dir="rtl"] .label { letter-spacing: 0; }
+.hov:hover { background: var(--hover); }
+.label { font-size: 12px; font-weight: 600; color: var(--muted); }
+
+/* Side menu */
+.sidenav { background: var(--nav); }
+.sidenav-item { color: var(--text); }
+.sidenav-item:hover { background: var(--hover); }
+.sidenav-item[aria-current="page"] { background: var(--nav-sel); font-weight: 600; box-shadow: inset 3px 0 0 var(--color-brand); }
+[dir="rtl"] .sidenav-item[aria-current="page"] { box-shadow: inset -3px 0 0 var(--color-brand); }
+
+/* Data tables, everywhere in the main area. */
+main table { border-collapse: collapse; }
+main thead th { font-weight: 600; color: var(--muted); border-bottom: 1px solid var(--line-strong); padding-top: 10px; padding-bottom: 10px; }
+main tbody tr { border-bottom: 1px solid var(--line); }
+main tbody tr:last-child { border-bottom: 0; }
+main tbody tr:hover { background: var(--hover); }
+main tbody td { padding-top: 8px; padding-bottom: 8px; }
+main th:first-child, main td:first-child { padding-inline-start: 8px; }
+.no-scrollbar { scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }

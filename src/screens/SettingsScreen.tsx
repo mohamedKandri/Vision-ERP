@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Modal } from "../components/ui";
-import { Button, Card, Field, Select, TextInput, Toggle, useToast } from "../components/ui";
+import { Button, Card, Field, inputCls, Select, TextInput, Toggle, useToast } from "../components/ui";
 import { errorText, LANG_NAMES, useT, type Key } from "../i18n";
 import { formatMoney, parseMoney } from "../lib/money";
 import { rpc, type Lang, type Settings, type TaxRow } from "../lib/rpc";
@@ -156,7 +156,7 @@ export function SettingsScreen({ canEdit, onSaved }: { canEdit: boolean; onSaved
       case "textarea":
         return (
           <Field key={f.key} label={label(f.key)}>
-            <textarea className="min-h-20 w-full rounded-xl border line panel-2 p-3 outline-none focus:ring-2 focus:ring-brand" value={String(v ?? "")} onChange={(e) => set(f.key, e.target.value)} />
+            <textarea className={`${inputCls} min-h-20 p-3`} value={String(v ?? "")} onChange={(e) => set(f.key, e.target.value)} />
           </Field>
         );
       case "int":
