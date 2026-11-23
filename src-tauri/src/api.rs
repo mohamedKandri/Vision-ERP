@@ -27,6 +27,11 @@ impl Core {
         Self { conn: Arc::new(Mutex::new(conn)), sessions: Mutex::new(HashMap::new()) }
     }
 
+    /// Everyone logs in again (after a restore).
+    pub fn clear_sessions(&self) {
+        self.sessions.lock().unwrap().clear();
+    }
+
     fn session_user_id(&self, token: Option<&str>) -> ApiResult<i64> {
         let token = token.ok_or_else(ApiError::unauthorized)?;
         let mut sessions = self.sessions.lock().unwrap();
@@ -133,7 +138,7 @@ pub fn dispatch(core: &Core, token: Option<&str>, method: &str, params: Value) -
     }
 
     let uid = core.session_user_id(token)?;
-    let conn = core.conn.lock().unwrap();
+    let mut conn = core.conn.lock().unwrap();
     // Reload on every call so a deactivated user or a permission change takes effect at once.
     let me = auth::load_session_user(&conn, uid).map_err(|_| ApiError::unauthorized())?;
 
@@ -926,6 +931,104 @@ pub fn dispatch(core: &Core, token: Option<&str>, method: &str, params: Value) -
         "suppliers.list" => {
             require_any(&me, &["purchasing.manage", "inventory.manage"])?;
             crate::purchasing::list_suppliers(&conn)
+        }
+        "backup.list" => {
+            require(&me, "settings.manage")?;
+            let dir = crate::backup::dir()?;
+            let import = crate::export::import_dir();
+            Ok(json!({ "items": crate::backup::list_in(dir, import.as_deref()), "dir": dir.display().to_string(),
+                       "import_dir": import.map(|p| p.display().to_string()) }))
+        }
+        "backup.create" => {
+            require(&me, "settings.manage")?;
+            let name = crate::backup::create_in(&conn, crate::backup::dir()?, "manual")?;
+            audit::log(&conn, Some(me.id), "backup.created", None, Some(&name), None)?;
+            Ok(json!({ "name": name }))
+        }
+        "backup.copy_out" => {
+            require(&me, "settings.manage")?;
+            #[derive(Deserialize)]
+            struct P {
+                name: String,
+            }
+            let P { name } = p(params)?;
+            let src = crate::backup::resolve(crate::backup::dir()?, None, &name, "backups")?;
+            let data = std::fs::read(&src).map_err(|e| ApiError::new("export_failed", e.to_string()))?;
+            let path = crate::export::save(&name, &data).map_err(|e| ApiError::new("export_failed", e))?;
+            audit::log(&conn, Some(me.id), "backup.copied", None, Some(&name), Some(json!({ "to": path })))?;
+            Ok(json!({ "path": path }))
+        }
+        "backup.restore" => {
+            if me.role != "owner" {
+                return Err(ApiError::forbidden("owner"));
+            }
+            #[derive(Deserialize)]
+            struct P {
+                name: String,
+                location: String,
+            }
+            let P { name, location } = p(params)?;
+            let dir = crate::backup::dir()?;
+            let import = crate::export::import_dir();
+            let src = crate::backup::resolve(dir, import.as_deref(), &name, &location)?;
+            let safety = crate::backup::restore_from(&mut conn, dir, &src)?;
+            audit::log(&conn, None, "backup.restored", None, Some(&name), Some(json!({ "by": me.name, "safety_copy": safety })))?;
+            drop(conn);
+            core.clear_sessions();
+            Ok(json!({ "safety_copy": safety }))
+        }
+        "customers.lookup" => {
+            require_any(&me, &["pos.sell", "customers.manage"])?;
+            #[derive(Deserialize)]
+            struct P {
+                phone: String,
+            }
+            let P { phone } = p(params)?;
+            crate::customers::lookup(&conn, &phone)
+        }
+        "customers.list" => {
+            require(&me, "customers.manage")?;
+            let f: crate::customers::ListIn = if params.is_null() { Default::default() } else { p(params)? };
+            crate::customers::list(&conn, &f)
+        }
+        "customers.get" => {
+            require(&me, "customers.manage")?;
+            #[derive(Deserialize)]
+            struct P {
+                id: i64,
+            }
+            let P { id } = p(params)?;
+            crate::customers::get(&conn, id)
+        }
+        "customers.save" => {
+            require(&me, "customers.manage")?;
+            Ok(json!({ "id": crate::customers::save(&conn, &me, p(params)?)? }))
+        }
+        "loyalty.adjust" => {
+            require(&me, "customers.manage")?;
+            #[derive(Deserialize)]
+            struct P {
+                customer_id: i64,
+                #[serde(default)]
+                stamps: i64,
+                #[serde(default)]
+                points: i64,
+                reason: String,
+            }
+            let a: P = p(params)?;
+            crate::customers::adjust(&conn, &me, a.customer_id, a.stamps, a.points, &a.reason)?;
+            Ok(Value::Null)
+        }
+        "loyalty.redeem" => {
+            require(&me, "pos.sell")?;
+            #[derive(Deserialize)]
+            struct P {
+                order_id: i64,
+                points: Option<i64>,
+            }
+            let P { order_id, points } = p(params)?;
+            crate::customers::redeem(&conn, &me, order_id, points)?;
+            orders::get(&conn, order_id)
         }
         "suppliers.save" => {
             require(&me, "purchasing.manage")?;

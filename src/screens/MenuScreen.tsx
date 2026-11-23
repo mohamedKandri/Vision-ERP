@@ -301,6 +301,9 @@ function ProductEditor({
         <div className="grid gap-2 sm:grid-cols-2">
           <Toggle checked={p.active} onChange={(v) => setP({ ...p, active: v })} label={t("active")} />
           <Toggle checked={p.available} onChange={(v) => setP({ ...p, available: v })} label={t("available")} />
+          {p.kind === "simple" && (
+            <Toggle checked={!!p.loyalty_stamp} onChange={(v) => setP({ ...p, loyalty_stamp: v })} label={t("lo_earns_stamp")} />
+          )}
         </div>
 
         {p.kind === "simple" && (

@@ -124,13 +124,17 @@ pub fn events() -> &'static tokio::sync::broadcast::Sender<String> {
 pub fn topic_of(method: &str) -> Option<&'static str> {
     let read_suffixes = [
         ".get", ".list", ".board", ".status", ".context", ".me", ".users", ".problems", ".jobs", ".job", ".current", ".report",
-        ".sessions", ".discover", ".info", ".stations", ".history", ".alerts", ".food_cost", ".suggestions", ".summary",
+        ".sessions", ".discover", ".info", ".stations", ".history", ".alerts", ".food_cost", ".suggestions", ".summary", ".lookup",
     ];
     if read_suffixes.iter().any(|s| method.ends_with(s)) || method.starts_with("auth.") || method == "app.status" {
         return None;
     }
+    if method == "backup.restore" {
+        return Some("all"); // every screen reloads (and goes back to the login)
+    }
     Some(match method.split('.').next().unwrap_or("") {
-        "orders" | "kds" => "orders",
+        "orders" | "kds" | "loyalty" => "orders",
+        "customers" => "customers",
         "cash" | "drawer" => "cash",
         "menu" | "products" | "categories" | "modifier_groups" => "menu",
         "print" | "printers" | "stations" => "print",

@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { Modal } from "../components/ui";
 import { Button, Card, Field, Select, TextInput, Toggle, useToast } from "../components/ui";
 import { errorText, LANG_NAMES, useT, type Key } from "../i18n";
 import { formatMoney, parseMoney } from "../lib/money";
@@ -243,6 +244,7 @@ export function SettingsScreen({ canEdit, onSaved }: { canEdit: boolean; onSaved
           </Card>
         ))}
       </fieldset>
+      {canEdit && <BackupCard />}
       {canEdit && (
         <div className="fixed bottom-0 end-0 start-0 flex justify-end gap-3 border-t line panel p-3 md:start-56">
           <Button disabled={!dirty} onClick={() => setDraft(saved)}>
@@ -267,4 +269,93 @@ async function shrinkImage(file: File, max: number): Promise<string> {
   c.height = Math.round(bmp.height * scale);
   c.getContext("2d")!.drawImage(bmp, 0, 0, c.width, c.height);
   return c.toDataURL("image/png");
+}
+
+// ---------------------------------------------------------------- backups (Phase 9)
+
+interface BackupItem { name: string; kind: string; size: number; modified: number; location: "backups" | "downloads" }
+
+/** Back up now, copy a backup to Downloads, restore (owner). Lives on the Host. */
+function BackupCard() {
+  const t = useT();
+  const toast = useToast();
+  const [data, setData] = useState<{ items: BackupItem[]; dir: string; import_dir: string | null } | null>(null);
+  const [owner, setOwner] = useState(false);
+  const [confirm, setConfirm] = useState<BackupItem | null>(null);
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(() => rpc<typeof data>("backup.list").then(setData, (e) => toast.error(errorText(t.lang, e))),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [t.lang]);
+  useEffect(() => void load(), [load]);
+  useEffect(() => void rpc<{ role: string }>("auth.me").then((u) => setOwner(u.role === "owner"), () => {}), []);
+  const fmt = new Intl.DateTimeFormat(`${t.lang === "ar" ? "ar-MA" : t.lang === "en" ? "en-GB" : "fr-FR"}-u-nu-latn`, { dateStyle: "short", timeStyle: "short" });
+  const size = (b: number) => (b >= 1_048_576 ? `${(b / 1_048_576).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`);
+  const run = async (f: () => Promise<string>) => {
+    setBusy(true);
+    try {
+      toast.ok(await f());
+      await load();
+    } catch (e) {
+      toast.error(errorText(t.lang, e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const restore = async (b: BackupItem) => {
+    setBusy(true);
+    try {
+      await rpc("backup.restore", { name: b.name, location: b.location });
+      window.location.reload(); // everyone logs in again on the restored data
+    } catch (e) {
+      setBusy(false);
+      setConfirm(null);
+      toast.error(errorText(t.lang, e));
+    }
+  };
+  return (
+    <div className="mt-4">
+      <Card title={t("bk_title")} actions={
+        <Button variant="primary" disabled={busy} onClick={() => run(async () => t("bk_done", { n: (await rpc<{ name: string }>("backup.create")).name }))}>{t("bk_now")}</Button>
+      }>
+        <p className="muted mb-3 text-sm">{t("bk_hint")}</p>
+        {data && <p className="muted mb-3 break-all text-xs" dir="ltr">{data.dir}{data.import_dir ? ` · ${data.import_dir}` : ""}</p>}
+        {!data ? <p className="muted">{t("loading")}</p> : data.items.length === 0 ? <p className="muted">{t("bk_none")}</p> : (
+          <div className="max-h-96 overflow-auto">
+            <table className="w-full text-sm">
+              <tbody>
+                {data.items.map((b) => (
+                  <tr key={`${b.location}/${b.name}`} className="border-t line">
+                    <td className="py-2 pe-3">
+                      <div className="font-medium">{t(`bk_kind_${b.kind.replace("-", "_")}` as Key)}{b.location === "downloads" ? ` · ${t("bk_in_downloads")}` : ""}</div>
+                      <div className="muted break-all text-xs" dir="ltr">{b.name}</div>
+                    </td>
+                    <td className="num pe-3 whitespace-nowrap">{fmt.format(new Date(b.modified * 1000))}</td>
+                    <td className="num muted pe-3 text-end">{size(b.size)}</td>
+                    <td className="text-end whitespace-nowrap">
+                      {b.location === "backups" && (
+                        <Button className="!min-h-10" disabled={busy} onClick={() => run(async () => t("rp_saved", { p: (await rpc<{ path: string }>("backup.copy_out", { name: b.name })).path }))}>{t("bk_copy")}</Button>
+                      )}
+                      {owner && <Button className="!min-h-10 ms-2" variant="danger" disabled={busy} onClick={() => setConfirm(b)}>{t("bk_restore")}</Button>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+      {confirm && (
+        <Modal onClose={() => !busy && setConfirm(null)}>
+          <h2 className="mb-2 text-xl font-bold">{t("bk_restore")}</h2>
+          <p className="mb-2">{t("bk_restore_warn", { d: fmt.format(new Date(confirm.modified * 1000)) })}</p>
+          <p className="muted mb-4 text-sm">{t("bk_restore_safety")}</p>
+          <div className="flex justify-end gap-2">
+            <Button disabled={busy} onClick={() => setConfirm(null)}>{t("cancel")}</Button>
+            <Button variant="danger" disabled={busy} onClick={() => restore(confirm)}>{t("bk_restore_confirm")}</Button>
+          </div>
+        </Modal>
+      )}
+      {toast.node}
+    </div>
+  );
 }

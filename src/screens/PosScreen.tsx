@@ -1,4 +1,4 @@
-import { LayoutDashboard, Bell, ChefHat, ClipboardList, Minus, Pause, Percent, Plus, Receipt, Scissors, Trash2, X } from "lucide-react";
+import { LayoutDashboard, Bell, Star, ChefHat, ClipboardList, Minus, Pause, Percent, Plus, Receipt, Scissors, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import FloorScreen from "./FloorScreen";
 import { ItemConfigurator } from "../components/ItemConfigurator";
@@ -12,6 +12,7 @@ import { buildReceipt } from "../lib/receipt";
 import { isApiError, rpc, type Lang, type SessionUser, type Settings, type TaxRow } from "../lib/rpc";
 import { device } from "../lib/device";
 import { useLive } from "../lib/live";
+import { formatPhone, normalizePhone, pointsValue, stampProgress, type Customer } from "../lib/loyalty";
 import { FloorBoard, FloorTabs, StateLegend, usePlan, type PlanTable } from "../components/FloorPlan";
 import { PrintProblems } from "./PrintersScreen";
 import { printReceipt, type ReceiptPrinter } from "../lib/print";
@@ -170,6 +171,21 @@ export function PosScreen({ me }: { me: SessionUser }) {
     });
   }, [ix, ctx, order, cart, draft, taxById, s]);
 
+  // Phone typed for a new order: look the customer up and fill in what's empty.
+  const [found, setFound] = useState<Customer | null>(null);
+  useEffect(() => {
+    if (order) return;
+    const phone = normalizePhone(draft.customer_phone);
+    if (!phone) return setFound(null);
+    const id = setTimeout(() => {
+      rpc<Customer | null>("customers.lookup", { phone }).then((c) => {
+        setFound(c);
+        if (c) setDraft((d) => ({ ...d, customer_name: d.customer_name || c.name, customer_address: d.customer_address || c.address }));
+      }, () => setFound(null));
+    }, 350);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft.customer_phone, order?.id]);
   if (!ctx || !ix) return <p className="muted p-6">{t("loading")}</p>;
 
   // -------------------------------------------------------------- actions
@@ -269,6 +285,14 @@ export function PosScreen({ me }: { me: SessionUser }) {
     }
   };
 
+  const loyaltyMode = String(s.loyalty_mode ?? "none");
+  const stampsNeeded = Number(s.loyalty_stamps_needed ?? 10);
+  const pointValue = Number(s.loyalty_point_value_cents ?? 0);
+  const loyaltyText = (stamps: number, points: number) =>
+    loyaltyMode === "stamps"
+      ? (() => { const p = stampProgress(stamps, stampsNeeded); return p.rewards > 0 ? t("lo_reward_ready", { n: p.rewards }) : t("lo_stamps_of", { n: p.current, of: stampsNeeded }); })()
+      : loyaltyMode === "points" ? t("lo_points_worth", { n: points, v: m(pointsValue(points, pointValue)) }) : "";
+
   const types: OrderType[] = (["dine_in", "takeaway", "delivery"] as const).filter((x) => s[`order_type_${x}`] !== false);
   const locked = !!order;
   const editable = !order || !["closed", "voided"].includes(order.status);
@@ -357,13 +381,20 @@ export function PosScreen({ me }: { me: SessionUser }) {
                 </button>
               )}
               {draft.type !== "dine_in" && (
-                <TextInput className="!min-h-10" placeholder={t("pos_customer_name")} value={draft.customer_name} onChange={(e) => setDraft({ ...draft, customer_name: e.target.value })} />
+                <div className="grid grid-cols-2 gap-1">
+                  <TextInput className="!min-h-10" inputMode="tel" dir="ltr" placeholder={t("pos_customer_phone")} value={draft.customer_phone} onChange={(e) => setDraft({ ...draft, customer_phone: e.target.value })} />
+                  <TextInput className="!min-h-10" placeholder={t("pos_customer_name")} value={draft.customer_name} onChange={(e) => setDraft({ ...draft, customer_name: e.target.value })} />
+                </div>
               )}
               {draft.type === "delivery" && (
-                <>
-                  <TextInput className="!min-h-10" inputMode="tel" dir="ltr" placeholder={t("pos_customer_phone")} value={draft.customer_phone} onChange={(e) => setDraft({ ...draft, customer_phone: e.target.value })} />
-                  <TextInput className="!min-h-10" placeholder={t("pos_customer_address")} value={draft.customer_address} onChange={(e) => setDraft({ ...draft, customer_address: e.target.value })} />
-                </>
+                <TextInput className="!min-h-10" placeholder={t("pos_customer_address")} value={draft.customer_address} onChange={(e) => setDraft({ ...draft, customer_address: e.target.value })} />
+              )}
+              {draft.type !== "dine_in" && found && (
+                <div className="flex items-center gap-1.5 rounded-sm bg-amber-500/10 px-2 py-1 text-[13px]" data-testid="customer-chip">
+                  <Star className="h-3.5 w-3.5 shrink-0 text-amber-500" />
+                  <b className="truncate">{found.name || formatPhone(found.phone)}</b>
+                  <span className="muted truncate">· {t("lo_n_orders", { n: found.orders })}{loyaltyMode !== "none" ? ` · ${loyaltyText(found.stamps, found.points)}` : ""}</span>
+                </div>
               )}
             </div>
           )}
@@ -406,12 +437,29 @@ export function PosScreen({ me }: { me: SessionUser }) {
               );
             })}
           </div>
+          {order?.loyalty && (
+            <div className="flex items-center gap-2 border-t line bg-amber-500/10 px-3 py-1.5 text-[13px]" data-testid="loyalty-strip">
+              <Star className="h-4 w-4 shrink-0 text-amber-500" />
+              <span className="min-w-0 flex-1 truncate">
+                <b>{order.loyalty.customer.name || formatPhone(order.loyalty.customer.phone)}</b>
+                {order.loyalty.mode !== "none" && <span className="muted"> · {loyaltyText(order.loyalty.stamps, order.loyalty.points)}</span>}
+              </span>
+              {order.loyalty.redeemed ? (
+                <span className="shrink-0 font-semibold text-pink-600">{t("lo_reward_used")}</span>
+              ) : order.loyalty.can_redeem && !cart.length ? (
+                <button className="h-9 shrink-0 rounded-sm bg-amber-500 px-3 font-semibold text-black"
+                  onClick={() => call("loyalty.redeem", { order_id: order.id }, t("lo_reward_applied"))}>
+                  {order.loyalty.mode === "stamps" ? t("lo_use_reward") : t("lo_use_points", { n: order.loyalty.max_points, v: m(pointsValue(order.loyalty.max_points, order.loyalty.point_value_cents)) })}
+                </button>
+              ) : null}
+            </div>
+          )}
           <div className="border-t-2 border-[var(--text)] px-3 py-2">
             <div className="muted flex justify-between text-[13px]"><span>HT</span><span dir="ltr">{m(baseShown)}</span></div>
             <div className="muted flex justify-between text-[13px]"><span>{t("rc_vat")}</span><span dir="ltr">{m(taxShown)}</span></div>
             {order?.discount_kind && (
               <div className="flex justify-between text-[13px] text-pink-600">
-                <span>{t("pos_discount")} {order.discount_kind === "percent" ? formatRate(order.discount_value ?? 0) : ""}</span>
+                <span>{order.loyalty?.redeemed ? t("lo_reward") : t("pos_discount")} {order.discount_kind === "percent" ? formatRate(order.discount_value ?? 0) : ""}</span>
                 <span dir="ltr">-{m(estimate?.order_discount ?? 0)}</span>
               </div>
             )}

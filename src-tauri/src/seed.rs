@@ -186,6 +186,8 @@ pub fn seed_demo_menu(conn: &Connection, user_id: i64, tax_id: i64) -> ApiResult
         {"product_id": spicy, "variant_id": v(spicy, "Simple")?},
         {"product_id": mushroom, "variant_id": v(mushroom, "Simple")?},
         {"product_id": kefta}, {"product_id": veggie}]))?;
+    // Every burger earns a loyalty stamp.
+    c.execute("UPDATE products SET loyalty_stamp=1 WHERE category_id=?1 AND kind='simple'", [c_burgers])?;
 
     tx.commit()?;
     Ok(true)

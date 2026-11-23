@@ -69,6 +69,8 @@ export interface Product {
   photo: string;
   active: boolean;
   available: boolean;
+  /** Earns a loyalty stamp ("every Nth burger free"). */
+  loyalty_stamp?: boolean;
   sort: number;
   variants: Variant[];
   group_ids: number[];

@@ -55,6 +55,16 @@ describe("wrap / row", () => {
 });
 
 describe("buildReceipt", () => {
+  it("shows the loyalty reward and the balance after the order", () => {
+    const lo = { customer: { id: 1, name: "Sara", phone: "0612345678" }, mode: "stamps" as const, stamps: 13, points: 0, stamps_needed: 10,
+      point_value_cents: 10, redeemed_stamps: 10, redeemed_points: 0, redeemed: true, can_redeem: false, max_points: 0 };
+    const text = receiptText(buildReceipt({ ...order, loyalty: lo }, settings, { lang: "fr", width: 48 }), 48).join(" | ");
+    expect(text).toContain("Fidélité");
+    expect(text).toContain("Fidélité: 3 / 10 tampons");
+    const pts = receiptText(buildReceipt({ ...order, loyalty: { ...lo, mode: "points", points: 68, redeemed: false } }, settings, { lang: "fr", width: 48 }), 48).join(" | ");
+    expect(pts).toContain("68 pts (6,80 DH)");
+    expect(receiptText(buildReceipt(order, settings, { lang: "fr", width: 48 }), 48).join(" | ")).not.toContain("tampons");
+  });
   const lines = buildReceipt(order, settings, { lang: "fr", width: 32, formatDate: fixedDate });
   const all = receiptText(lines, 32).join("\n").replace(/[  ]/g, " ");
 

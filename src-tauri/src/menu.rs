@@ -118,7 +118,7 @@ pub fn get_menu(conn: &Connection, all: bool) -> ApiResult<Menu> {
     let mut products = conn
         .prepare(&format!(
             "SELECT id, category_id, kind, names, description, price_cents, happy_hour_price_cents, tax_id,
-                    station_id, photo, active, available, sort FROM products{act} ORDER BY sort, id"
+                    station_id, photo, active, available, sort, loyalty_stamp FROM products{act} ORDER BY sort, id"
         ))?
         .query_map([], |r| {
             Ok(json!({"id": r.get::<_, i64>(0)?, "category_id": r.get::<_, i64>(1)?, "kind": r.get::<_, String>(2)?,
@@ -126,7 +126,7 @@ pub fn get_menu(conn: &Connection, all: bool) -> ApiResult<Menu> {
                       "price_cents": r.get::<_, i64>(5)?, "happy_hour_price_cents": r.get::<_, Option<i64>>(6)?,
                       "tax_id": r.get::<_, i64>(7)?, "station_id": r.get::<_, Option<i64>>(8)?,
                       "photo": r.get::<_, String>(9)?, "active": r.get::<_, bool>(10)?,
-                      "available": r.get::<_, bool>(11)?, "sort": r.get::<_, i64>(12)?}))
+                      "available": r.get::<_, bool>(11)?, "sort": r.get::<_, i64>(12)?, "loyalty_stamp": r.get::<_, bool>(13)?}))
         })?
         .collect::<Result<Vec<_>, _>>()?;
 
@@ -399,6 +399,9 @@ pub struct ProductIn {
     pub group_ids: Vec<i64>,
     #[serde(default)]
     pub slots: Vec<SlotIn>,
+    /// Earns a loyalty stamp. None keeps the current value.
+    #[serde(default)]
+    pub loyalty_stamp: Option<bool>,
 }
 fn empty_obj() -> Value {
     json!({})
@@ -534,6 +537,9 @@ pub fn save_product(conn: &Connection, user_id: i64, p: ProductIn) -> ApiResult<
             tx.last_insert_rowid()
         }
     };
+    if let Some(v) = p.loyalty_stamp {
+        tx.execute("UPDATE products SET loyalty_stamp=?2 WHERE id=?1", params![pid, v])?;
+    }
 
     // Variants: upsert, keep ids stable, deactivate the ones removed.
     let keep: Vec<i64> = p.variants.iter().filter_map(|v| v.id).collect();

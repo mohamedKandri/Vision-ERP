@@ -180,6 +180,7 @@ pub fn recompute(conn: &Connection, order_id: i64) -> ApiResult<()> {
         ],
     )?;
     auto_close(conn, order_id)?;
+    crate::customers::sync_order(conn, order_id, None)?;
     Ok(())
 }
 
@@ -264,6 +265,7 @@ pub fn get(conn: &Connection, id: i64) -> ApiResult<Value> {
     o["lines"] = json!(lines);
     o["payments"] = json!(payments);
     o["due_cents"] = json!(o["total_cents"].as_i64().unwrap_or(0) - o["paid_cents"].as_i64().unwrap_or(0));
+    o["loyalty"] = crate::customers::order_info(conn, id)?;
     Ok(o)
 }
 
@@ -401,7 +403,11 @@ pub fn submit(conn: &Connection, me: &SessionUser, s: SubmitIn) -> ApiResult<i64
                  VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
                 params![number, kind, table, name.trim(), phone.trim(), address.trim(), fee, fee_tax, note.trim(), s.register, me.id],
             )?;
-            tx.last_insert_rowid()
+            let id = tx.last_insert_rowid();
+            if let Some(cid) = crate::customers::link(&tx, &phone, &name, &address)? {
+                tx.execute("UPDATE orders SET customer_id=?2 WHERE id=?1", params![id, cid])?;
+            }
+            id
         }
     };
 
@@ -609,7 +615,8 @@ pub fn set_order_discount(conn: &Connection, me: &SessionUser, order_id: i64, d:
     ensure_editable(&o)?;
     match d {
         None => {
-            tx.execute("UPDATE orders SET discount_kind=NULL, discount_value=NULL, discount_reason=NULL, discount_by=NULL WHERE id=?1", [order_id])?;
+            tx.execute("UPDATE orders SET discount_kind=NULL, discount_value=NULL, discount_reason=NULL, discount_by=NULL,
+               loyalty_redeem_stamps=0, loyalty_redeem_points=0 WHERE id=?1", [order_id])?;
             audit::log(&tx, Some(me.id), "order.discount_removed", Some("order"), Some(&order_id.to_string()), None)?;
         }
         Some(d) => {
@@ -625,7 +632,8 @@ pub fn set_order_discount(conn: &Connection, me: &SessionUser, order_id: i64, d:
                 me.id
             };
             tx.execute(
-                "UPDATE orders SET discount_kind=?2, discount_value=?3, discount_reason=?4, discount_by=?5 WHERE id=?1",
+                "UPDATE orders SET discount_kind=?2, discount_value=?3, discount_reason=?4, discount_by=?5,
+                   loyalty_redeem_stamps=0, loyalty_redeem_points=0 WHERE id=?1",
                 params![order_id, d.kind, d.value, d.reason.trim(), by],
             )?;
             audit::log(&tx, Some(me.id), "order.discount", Some("order"), Some(&order_id.to_string()),
@@ -751,6 +759,7 @@ pub fn void(conn: &Connection, me: &SessionUser, order_id: i64, reason: &str, ap
     )?;
     crate::kds::void_order(&tx, order_id)?;
     crate::stock::sync_order(&tx, order_id, Some(me.id))?;
+    crate::customers::sync_order(&tx, order_id, Some(me.id))?;
     audit::log(&tx, Some(me.id), "order.voided", Some("order"), Some(&order_id.to_string()),
         Some(json!({"reason": reason.trim(), "total_cents": o.total_cents, "approved_by": by})))?;
     tx.commit()?;
@@ -833,8 +842,8 @@ pub fn split(conn: &Connection, me: &SessionUser, order_id: i64, moves: Vec<Spli
     let next_index: i64 = tx.query_row("SELECT MAX(split_index)+1 FROM orders WHERE number=?1", [number], |r| r.get(0))?;
     tx.execute(
         "INSERT INTO orders (number, split_index, parent_id, type, table_id, customer_name, customer_phone, customer_address,
-           delivery_fee_cents, delivery_tax_id, note, status, register, created_by, sent_at)
-         SELECT number, ?2, ?3, type, table_id, customer_name, customer_phone, customer_address, 0, delivery_tax_id, note,
+           customer_id, delivery_fee_cents, delivery_tax_id, note, status, register, created_by, sent_at)
+         SELECT number, ?2, ?3, type, table_id, customer_name, customer_phone, customer_address, customer_id, 0, delivery_tax_id, note,
            CASE WHEN status='open' THEN 'open' ELSE status END, register, ?4, sent_at FROM orders WHERE id=?1",
         params![order_id, next_index, root, me.id],
     )?;

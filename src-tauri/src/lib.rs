@@ -1,7 +1,9 @@
 pub mod api;
 pub mod audit;
+pub mod backup;
 pub mod auth;
 pub mod client;
+pub mod customers;
 pub mod cash;
 pub mod db;
 pub mod error;
@@ -175,6 +177,11 @@ pub mod export {
         Ok(p)
     }
 
+    /// The Downloads/BURGER-OS folder (where a backup to restore can be put).
+    pub fn import_dir() -> Option<PathBuf> {
+        DIRS.get().map(|(main, _)| main.clone())
+    }
+
     /// Writes to the Downloads/BURGER-OS folder, else to the app's own exports folder.
     pub fn save(name: &str, data: &[u8]) -> Result<String, String> {
         let (main, fallback) = DIRS.get().ok_or("export folder not ready")?;
@@ -264,8 +271,10 @@ pub fn run() {
                 _ => fallback.clone(),
             };
             let _ = export::DIRS.set((main, fallback));
+            let _ = backup::DIR.set(dir.join("backups"));
             let conn = db::open(&dir.join("burger-os.db"))?;
             let core = Arc::new(Core::new(conn));
+            backup::start_daily(core.conn.clone());
             let cfg = net::load(dir.join("device.json"));
             printing::start_worker(core.conn.clone());
 

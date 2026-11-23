@@ -117,7 +117,8 @@ export function buildReceipt(o: Order, s: Settings, opts: ReceiptOpts): ReceiptL
   out.push({ kind: "row", left: t("rc_subtotal"), right: m(linesTotal) });
   if (o.discount_kind) {
     const off = linesTotal + o.delivery_fee_cents - o.total_cents;
-    out.push({ kind: "row", left: `${t("rc_discount")}${o.discount_kind === "percent" ? ` ${formatRate(o.discount_value ?? 0)}` : ""}`, right: `-${m(off)}` });
+    const label = o.loyalty?.redeemed ? t("lo_reward") : t("rc_discount");
+    out.push({ kind: "row", left: `${label}${o.discount_kind === "percent" ? ` ${formatRate(o.discount_value ?? 0)}` : ""}`, right: `-${m(off)}` });
   }
   if (o.delivery_fee_cents > 0) out.push({ kind: "row", left: t("rc_delivery_fee"), right: m(o.delivery_fee_cents) });
   out.push({ kind: "row", left: t("rc_total"), right: m(o.total_cents), bold: true, big: true });
@@ -139,6 +140,15 @@ export function buildReceipt(o: Order, s: Settings, opts: ReceiptOpts): ReceiptL
   }
   if (o.due_cents > 0 && o.status !== "voided") out.push({ kind: "row", left: t("rc_due"), right: m(o.due_cents), bold: true });
 
+  // Loyalty balance after this order (stamps or points), when the order has a customer.
+  const lo = o.loyalty;
+  if (lo && lo.mode !== "none") {
+    out.push({ kind: "feed" });
+    const bal = lo.mode === "stamps"
+      ? t("lo_stamps_of", { n: lo.stamps % Math.max(1, lo.stamps_needed), of: lo.stamps_needed })
+      : t("lo_points_worth", { n: lo.points, v: m(lo.points * lo.point_value_cents) });
+    text(`${t("lo_reward")}: ${bal}`, { align: "center" });
+  }
   if (s.receipt_footer) {
     out.push({ kind: "feed" });
     for (const l of String(s.receipt_footer).split("\n")) text(l, { align: "center" });

@@ -47,6 +47,8 @@ export interface Payment {
 
 export interface Order {
   id: number;
+  /** Customer and loyalty status (null when the order has no customer). */
+  loyalty?: import("./loyalty").OrderLoyalty | null;
   number: number;
   split_index: number;
   parent_id: number | null;
