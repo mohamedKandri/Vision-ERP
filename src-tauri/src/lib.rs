@@ -15,6 +15,7 @@ pub mod orders;
 pub mod pricing;
 pub mod printing;
 pub mod purchasing;
+pub mod reports;
 pub mod seed;
 pub mod server;
 pub mod settings;
@@ -103,6 +104,23 @@ fn device_local(core: &Core, token: Option<&str>, method: &str, params: Value) -
             net::save(net::DeviceConfig { mode: net::Mode::Host, port: cfg.port, register: cfg.register.clone(), kind: cfg.kind.clone(), name: cfg.name.clone(), ..Default::default() })?;
             device_local(core, None, "device.get", Value::Null)
         }
+        "device.save_export" => {
+            // A report file (CSV or PDF) saved on THIS device, for any logged-in user.
+            let ok = if net::is_client() { client::forward("auth.me", token, &Value::Null).is_ok() } else { api::dispatch(core, token, "auth.me", Value::Null).is_ok() };
+            if !ok {
+                return Err(ApiError::unauthorized());
+            }
+            let name = export::safe_name(&str_param("name")).ok_or_else(|| ApiError::invalid("bad file name"))?;
+            use base64::Engine;
+            let data = base64::engine::general_purpose::STANDARD
+                .decode(params.get("data").and_then(|v| v.as_str()).unwrap_or(""))
+                .map_err(|_| ApiError::invalid("bad file data"))?;
+            if data.is_empty() || data.len() > 20_000_000 {
+                return Err(ApiError::invalid("file too large"));
+            }
+            let path = export::save(&name, &data).map_err(|e| ApiError::new("export_failed", e))?;
+            Ok(serde_json::json!({ "path": path }))
+        }
         "device.update" => {
             // This device's own label, screen type and register; any logged-in user.
             let ok = if net::is_client() { client::forward("auth.me", token, &Value::Null).is_ok() } else { api::dispatch(core, token, "auth.me", Value::Null).is_ok() };
@@ -118,6 +136,72 @@ fn device_local(core: &Core, token: Option<&str>, method: &str, params: Value) -
             device_local(core, None, "device.get", Value::Null)
         }
         _ => Err(ApiError::new("unknown_method", method.to_string())),
+    }
+}
+
+/// Report files written on this device (Phase 8).
+pub mod export {
+    use std::path::PathBuf;
+    use std::sync::OnceLock;
+
+    /// (preferred folder, fallback folder) set at start-up.
+    pub static DIRS: OnceLock<(PathBuf, PathBuf)> = OnceLock::new();
+
+    /// Letters, digits, space, dot, dash, underscore; .csv or .pdf; at most 100 characters.
+    pub fn safe_name(name: &str) -> Option<String> {
+        let name = name.trim();
+        let ok_chars = name.chars().all(|c| c.is_ascii_alphanumeric() || " ._-".contains(c));
+        let lower = name.to_ascii_lowercase();
+        let ext_ok = lower.ends_with(".csv") || lower.ends_with(".pdf");
+        (ok_chars && ext_ok && name.len() > 4 && name.len() <= 100 && !name.starts_with('.') && !name.contains("..")).then(|| name.to_string())
+    }
+
+    /// `name`, or `name (2)`, `name (3)`... when the file already exists.
+    fn free_path(dir: &std::path::Path, name: &str) -> PathBuf {
+        let (stem, ext) = name.rsplit_once('.').unwrap_or((name, ""));
+        let mut p = dir.join(name);
+        let mut n = 2;
+        while p.exists() && n < 1000 {
+            p = dir.join(format!("{stem} ({n}).{ext}"));
+            n += 1;
+        }
+        p
+    }
+
+    fn write_in(dir: &std::path::Path, name: &str, data: &[u8]) -> std::io::Result<PathBuf> {
+        std::fs::create_dir_all(dir)?;
+        let p = free_path(dir, name);
+        std::fs::write(&p, data)?;
+        Ok(p)
+    }
+
+    /// Writes to the Downloads/BURGER-OS folder, else to the app's own exports folder.
+    pub fn save(name: &str, data: &[u8]) -> Result<String, String> {
+        let (main, fallback) = DIRS.get().ok_or("export folder not ready")?;
+        write_in(main, name, data)
+            .or_else(|_| write_in(fallback, name, data))
+            .map(|p| p.display().to_string())
+            .map_err(|e| e.to_string())
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn names_and_collisions() {
+            assert_eq!(safe_name("ventes 2026-11-17.csv").as_deref(), Some("ventes 2026-11-17.csv"));
+            assert_eq!(safe_name("Rapport.PDF").as_deref(), Some("Rapport.PDF"));
+            for bad in ["../x.csv", "a/b.csv", "a\\b.csv", "x.exe", ".csv", "rapport", "C:x.csv", "ventes\u{0645}.csv"] {
+                assert_eq!(safe_name(bad), None, "{bad}");
+            }
+            let d = tempfile::tempdir().unwrap();
+            let a = write_in(d.path(), "r.csv", b"1").unwrap();
+            let b = write_in(d.path(), "r.csv", b"2").unwrap();
+            assert_eq!(a.file_name().unwrap(), "r.csv");
+            assert_eq!(b.file_name().unwrap(), "r (2).csv");
+            assert_eq!(std::fs::read(&a).unwrap(), b"1", "never overwrites");
+        }
     }
 }
 
@@ -173,6 +257,13 @@ pub fn run() {
                 None => app.path().app_data_dir()?,
             };
             std::fs::create_dir_all(&dir)?;
+            // Exports: Downloads/BURGER-OS (the app's own folder in test builds).
+            let fallback = dir.join("exports");
+            let main = match app.path().download_dir() {
+                Ok(d) if std::env::var_os("BURGER_OS_DATA_DIR").is_none() => d.join("BURGER-OS"),
+                _ => fallback.clone(),
+            };
+            let _ = export::DIRS.set((main, fallback));
             let conn = db::open(&dir.join("burger-os.db"))?;
             let core = Arc::new(Core::new(conn));
             let cfg = net::load(dir.join("device.json"));

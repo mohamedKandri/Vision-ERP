@@ -695,3 +695,91 @@ Each phase records what was **verified** (by a test or by running the app) and w
   afterwards, it added the empty purchasing tables to your test database (no data
   changed). Demo suppliers are only added together with the demo ingredients ("Load demo
   ingredients and recipes" in Stock).
+
+## Phase 8: reports, dashboard, CSV/PDF export, audit log (2026-11-23)
+
+### Built
+- `reports.rs`, one report for any date range, computed from the ledger (no new tables, no
+  migration). The same counting rules apply everywhere, so every section adds up:
+  - a **sale** counts when the order is fully paid (`paid_at`), with its current totals;
+  - a **refund** counts on the day it is made, as the same amounts negated;
+  - voided orders are never sales; they are listed under voids;
+  - **food cost** of a line = the net value of its stock moves (used minus given back). A
+    refund removes the revenue but not the cost (if the stock wasn't given back, the food was
+    made and is a loss).
+- Sections: totals (orders, gross, discounts, refunds, net TTC/HT, VAT, delivery fees,
+  average ticket); by local hour and day; by product and category with cost, margin and
+  food cost %; by order type; by payment method (money actually taken, from `payments`); by
+  staff (who took the order); VAT by tax; every discount and comp with reason and approver;
+  voided orders, lines voided after sending, refunds; food cost and margin; stock value now
+  plus the period's moves by kind; waste by ingredient and entry by entry.
+- Dates: the screen sends its local days as UTC instants plus its UTC offset, used for
+  grouping by local hour and day. Validated format; at most ~400 days.
+- API: `reports.summary` (`reports.view`). `audit.list` gains filters: date range, user,
+  action groups (prefix match, no LIKE wildcards) and free-text search (action, entity id,
+  details, user name); up to 5000 rows for export.
+- Export files are written **on the device that asks** (`device.save_export`, never forwarded
+  to the Host), to `Downloads/BURGER-OS`, else the app's own `exports` folder. File names are
+  checked (letters, digits, space . - _, `.csv`/`.pdf` only); an existing file is never
+  overwritten ("name (2).csv").
+- UI: **Rapports / Reports** app (`reports.view`).
+  - **Today**: net sales, orders, average ticket, discounts and refunds, each compared with
+    yesterday at the same time; sales by hour (bars, tap for the value); top 5 products;
+    payment methods; order types. Refreshes live.
+  - **Date range**: presets (today, yesterday, this week from Monday, last 7 days, this month,
+    last month, last 30 days) or two dates; every section as a table; **CSV** and **PDF**.
+  - CSV: one file, every section stacked, UTF-8 with BOM; `;` and decimal comma in
+    French/Arabic, `,` and point in English; text that starts with = + - @ is quoted so Excel
+    doesn't run it.
+  - PDF: A4 pages drawn on a canvas (the browser shapes Arabic) and packed as JPEG images by
+    a small PDF writer (`lib/pdf.ts`), so no font or library is added. In Arabic, numbers are
+    isolated left-to-right ("د.م. -12,00").
+  - **Journal / Audit log**: filters (dates, who, action group, search) and CSV export.
+  - French, English, Arabic.
+
+### Verified
+- **Rust: 118 tests pass** (7 new):
+  - pure rules: date/instant validation, range limit, time-zone modifier, calendar
+    arithmetic, average and percentage rounding, VAT merge with refunds, a line's own
+    discount;
+  - sales, refunds, VAT and groupings: 3 sold, 1 refunded, 1 unpaid, 1 voided. Net 71.00,
+    and by hour, day, type, staff, product + delivery fee, category and VAT all add up to it.
+    Payment methods: cash 99.00 in, 50.00 out. Food cost equals the stock the sold lines
+    used;
+  - local hours and days at UTC+1 across midnight; an empty range gives zeros;
+  - discounts: 10 % line, comp, 5.00 order discount; listed amounts = the orders' discount
+    total. A line voided after sending, with its reason; waste by ingredient;
+  - API permissions (cashier refused, manager and owner allowed); audit filters, including
+    `%` treated as text; export file names and no overwrite.
+- **Vitest: 105 pass** (12 new in `report.test.ts`): date presets (week from Monday, last
+  month across a year), day parsing, file names, CSV numbers/escaping/formula guard/BOM,
+  report tables, percent format and no "-0,00", PDF structure (every xref offset checked),
+  Arabic number isolation, base64. `tsc` clean.
+- **The real app, driven by a script, on a throwaway database**: 26 checks pass, no page
+  errors.
+  - Today: net 71.00, 4 orders (the comped order paid at 0.00 counts), average 30.25,
+    refund shown, top products, hour bars.
+  - Date range: summary, VAT, payment methods, voids and refunds with reasons, comp listed,
+    food cost % in French format; last month shows "nothing in this period".
+  - CSV and PDF saved and opened: BOM, `;` and decimal comma, all sections; the PDF has 3
+    pages (looked at in French and Arabic).
+  - Audit log: the "Orders" filter, the search "plainte" finds the refund, the CSV holds
+    only the filtered rows.
+  - The cashier has no Reports app and the Host refuses `reports.summary`. Arabic is
+    right-to-left.
+- Found and fixed during the UI check: percentages showed a decimal point in French ("79.34
+  %"), a zero refund showed "-0,00 DH", Arabic PDF amounts lost their order, the PDF header
+  repeated the title, and the hour chart drew one very wide bar early in the day.
+
+### Not verified / known issues
+- Not tried on the tablet. Saving to `Downloads/BURGER-OS` on Android is untested: if
+  Android refuses it, the file goes to the app's own folder and the message shows where.
+  There is no "share" or "open" button yet.
+- Reports use each order's current totals: a paid order that is reopened and changed later
+  changes past reports (the Z report keeps its frozen snapshot).
+- A refund on a later day lowers that day's sales, not the original day's.
+- The PDF is made of page images: its text can't be selected or searched.
+- Food cost is 0 for products without a recipe, and for sales made before Phase 6.
+- Times use the device's current UTC offset for the whole range; a range across a clock
+  change groups the hours after the change one hour off.
+- No database change in this phase: your test database is not touched by this phase.

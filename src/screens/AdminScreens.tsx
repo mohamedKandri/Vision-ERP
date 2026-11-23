@@ -1,8 +1,9 @@
-import { Plus } from "lucide-react";
+import { Download, Plus } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Button, Card, Field, Modal, Select, TextInput, Toggle, useToast } from "../components/ui";
 import { errorText, LANG_NAMES, useT, type Key } from "../i18n";
 import { formatRate } from "../lib/money";
+import { addDays, dayKey, parseDay, toBase64, toCsv, type Table } from "../lib/report";
 import { rpc, type Lang, type SessionUser, type TaxRow } from "../lib/rpc";
 
 const ROLES = ["owner", "manager", "cashier", "kitchen"] as const;
@@ -235,23 +236,90 @@ interface AuditEntry {
   details: unknown;
 }
 
+/** Action groups for the filter (prefixes of the logged action names). */
+const AUDIT_GROUPS: { id: string; label: Key; prefixes: string[] }[] = [
+  { id: "orders", label: "audit_g_orders", prefixes: ["order.", "receipt.", "auth.override"] },
+  { id: "cash", label: "audit_g_cash", prefixes: ["cash.", "drawer."] },
+  { id: "stock", label: "audit_g_stock", prefixes: ["stock.", "ingredient.", "recipe.", "purchase.", "supplier."] },
+  { id: "menu", label: "audit_g_menu", prefixes: ["product.", "category.", "modifier_group.", "station."] },
+  { id: "staff", label: "audit_g_staff", prefixes: ["auth.", "user.", "permissions."] },
+  { id: "setup", label: "audit_g_setup", prefixes: ["settings.", "setup.", "printer.", "print.", "device.", "floor.", "table."] },
+];
+
 export function AuditScreen() {
   const t = useT();
+  const toast = useToast();
   const [rows, setRows] = useState<AuditEntry[]>([]);
   const [done, setDone] = useState(false);
+  const [users, setUsers] = useState<{ id: number; name: string }[]>([]);
+  const [f, setF] = useState({ from: "", to: "", user: 0, group: "", q: "" });
+  useEffect(() => void rpc<{ id: number; name: string }[]>("auth.users").then(setUsers, () => {}), []);
+  const filter = useCallback(() => {
+    const a = parseDay(f.from);
+    const b = parseDay(f.to);
+    return {
+      from: a ? a.toISOString() : undefined,
+      to: b ? addDays(b, 1).toISOString() : undefined,
+      user_id: f.user || undefined,
+      prefixes: AUDIT_GROUPS.find((g) => g.id === f.group)?.prefixes ?? [],
+      q: f.q.trim() || undefined,
+    };
+  }, [f]);
   const more = useCallback(
     (offset: number) =>
-      rpc<AuditEntry[]>("audit.list", { limit: 100, offset }).then((r) => {
-        setRows((old) => (offset === 0 ? r : [...old, ...r]));
-        setDone(r.length < 100);
-      }),
-    [],
+      rpc<AuditEntry[]>("audit.list", { ...filter(), limit: 100, offset }).then(
+        (r) => {
+          setRows((old) => (offset === 0 ? r : [...old, ...r]));
+          setDone(r.length < 100);
+        },
+        (e) => toast.error(errorText(t.lang, e)),
+      ),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [filter],
   );
-  useEffect(() => void more(0), [more]);
+  useEffect(() => {
+    const id = setTimeout(() => void more(0), 250);
+    return () => clearTimeout(id);
+  }, [more]);
   const fmt = new Intl.DateTimeFormat(t.lang === "ar" ? "ar-MA-u-nu-latn" : t.lang, { dateStyle: "short", timeStyle: "medium" });
+  const exportCsv = async () => {
+    try {
+      const all = await rpc<AuditEntry[]>("audit.list", { ...filter(), limit: 5000, offset: 0 });
+      const table: Table = {
+        id: "audit", title: t("nav_audit"),
+        columns: [{ label: t("audit_when") }, { label: t("audit_who") }, { label: t("audit_action") }, { label: t("audit_details") }],
+        rows: all.map((r) => [{ text: fmt.format(new Date(r.at)) }, { text: r.user_name ?? "" }, { text: r.action },
+          { text: [r.entity && r.entity_id ? `${r.entity} ${r.entity_id}` : "", r.details ? JSON.stringify(r.details) : ""].filter(Boolean).join(" · ") }]),
+      };
+      const csv = toCsv([t("nav_audit"), t("rp_generated", { d: fmt.format(new Date()) })], [table], t.lang);
+      const day = dayKey(new Date());
+      const r = await rpc<{ path: string }>("device.save_export", { name: `${t("audit_file_prefix")}_${day}.csv`, data: toBase64(new TextEncoder().encode(csv)) });
+      toast.ok(t("rp_saved", { p: r.path }));
+    } catch (e) {
+      toast.error(errorText(t.lang, e));
+    }
+  };
   return (
     <div className="mx-auto max-w-5xl p-4">
-      <Card title={t("nav_audit")}>
+      {toast.node}
+      <Card title={t("nav_audit")} actions={<Button onClick={exportCsv}><Download className="inline" /> CSV</Button>}>
+        <div className="mb-4 grid gap-3 sm:grid-cols-5">
+          <Field label={t("rp_from")}>
+            <TextInput type="date" value={f.from} onChange={(e) => setF({ ...f, from: e.target.value })} />
+          </Field>
+          <Field label={t("rp_to")}>
+            <TextInput type="date" value={f.to} onChange={(e) => setF({ ...f, to: e.target.value })} />
+          </Field>
+          <Field label={t("audit_who")}>
+            <Select value={f.user} onChange={(v) => setF({ ...f, user: v })} options={[{ value: 0, label: t("audit_everyone") }, ...users.map((u) => ({ value: u.id, label: u.name }))]} />
+          </Field>
+          <Field label={t("audit_action")}>
+            <Select value={f.group} onChange={(v) => setF({ ...f, group: v })} options={[{ value: "", label: t("audit_all_actions") }, ...AUDIT_GROUPS.map((g) => ({ value: g.id, label: t(g.label) }))]} />
+          </Field>
+          <Field label={t("audit_search")}>
+            <TextInput value={f.q} placeholder={t("audit_search_ph")} onChange={(e) => setF({ ...f, q: e.target.value })} />
+          </Field>
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="muted text-start">
@@ -273,6 +341,7 @@ export function AuditScreen() {
               ))}
             </tbody>
           </table>
+          {rows.length === 0 && <p className="muted py-4">{t("rp_nothing")}</p>}
         </div>
         {!done && <Button className="mt-3 w-full" onClick={() => more(rows.length)}>{t("load_more")}</Button>}
       </Card>

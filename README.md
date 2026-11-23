@@ -156,6 +156,23 @@ In Appareil on the Host, **Retirer** disconnects a lost or stolen device.
   **Close** an order that won't be completed; **Cancel** one nothing was received for.
   Each delivery appears in Stock → Movements as "Réception · BC-n".
 
+## Reports (Rapports)
+
+**Rapports** (managers and the owner):
+- **Today**: sales, orders, average ticket, discounts and refunds compared with yesterday at
+  the same time, sales by hour, top products, payment methods and order types. It updates by
+  itself.
+- **Date range**: pick a preset (today, yesterday, this week, last month…) or two dates.
+  Every report is there: by product, category, order type, payment method and staff; VAT;
+  discounts and comps; voids and refunds; food cost and margin; stock value; waste.
+- **CSV** and **PDF** save the report on the device you are using, in
+  `Downloads\BURGER-OS` (Windows) or `Download/BURGER-OS` (Android); the message shows the
+  full path. CSV files open directly in Excel (French Excel: `;` and decimal comma).
+- A sale counts on the day the order is fully paid; a refund counts on the day it is made.
+
+**Journal** (audit log): filter by dates, person, kind of action or a word (an order number,
+a reason), and export what you see as CSV.
+
 ## Printers
 
 **Imprimantes** (Owner): **Ajouter une imprimante**, choose the type, then **Test**.
@@ -214,6 +231,7 @@ adb install -r release/burger-os-0.1.0-arm64-test.apk
 - `src-tauri/src/api.rs`: the single RPC dispatcher. The webview calls `rpc(method, params)`.
   In Phase 5 the LAN server calls the same function, so auth and permissions live in one place.
 - `src-tauri/migrations/`: forward-only SQL migrations.
+- `src-tauri/src/reports.rs` + `src/lib/report.ts` + `src/lib/reportPdf.ts` + `src/lib/pdf.ts`: reports, CSV and PDF export.
 - `src-tauri/src/purchasing.rs` + `src/lib/purchasing.ts`: suppliers, purchase orders, goods receipts (weighted average cost), suggestions.
 - `src-tauri/src/stock.rs` + `src/lib/stock.ts`: stock quantities (thousandths of a unit), recipes, food cost; automatic deduction from orders.
 - Debug builds read `BURGER_OS_DATA_DIR` to use another data folder, so you can test on a throwaway database. Release builds ignore it.

@@ -984,13 +984,13 @@ pub fn dispatch(core: &Core, token: Option<&str>, method: &str, params: Value) -
 
         "audit.list" => {
             require(&me, "audit.view")?;
-            #[derive(Deserialize)]
-            struct P {
-                limit: Option<i64>,
-                offset: Option<i64>,
-            }
-            let P { limit, offset } = p(params)?;
-            Ok(json!(audit::list(&conn, limit.unwrap_or(100), offset.unwrap_or(0))?))
+            let f: audit::Filter = if params.is_null() { audit::Filter::default() } else { p(params)? };
+            Ok(json!(audit::list(&conn, &f)?))
+        }
+
+        "reports.summary" => {
+            require(&me, "reports.view")?;
+            crate::reports::report(&conn, &p(params)?)
         }
 
         _ => Err(ApiError::new("unknown_method", method.to_string())),
@@ -1143,11 +1143,11 @@ fn save_user(conn: &Connection, me: &SessionUser, u: SaveUser) -> ApiResult<Valu
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::db::open_in_memory;
 
-    fn core_with_setup() -> Core {
+    pub fn core_with_setup() -> Core {
         let core = Core::new(open_in_memory().unwrap());
         dispatch(
             &core,
@@ -1159,7 +1159,7 @@ mod tests {
         core
     }
 
-    fn login(core: &Core, name: &str, pin: &str) -> String {
+    pub fn login(core: &Core, name: &str, pin: &str) -> String {
         let users = dispatch(core, None, "auth.users", Value::Null).unwrap();
         let id = users.as_array().unwrap().iter().find(|u| u["name"] == name).unwrap()["id"].as_i64().unwrap();
         dispatch(core, None, "auth.login", json!({"user_id": id, "pin": pin})).unwrap()["token"]

@@ -124,7 +124,7 @@ pub fn events() -> &'static tokio::sync::broadcast::Sender<String> {
 pub fn topic_of(method: &str) -> Option<&'static str> {
     let read_suffixes = [
         ".get", ".list", ".board", ".status", ".context", ".me", ".users", ".problems", ".jobs", ".job", ".current", ".report",
-        ".sessions", ".discover", ".info", ".stations", ".history", ".alerts", ".food_cost", ".suggestions",
+        ".sessions", ".discover", ".info", ".stations", ".history", ".alerts", ".food_cost", ".suggestions", ".summary",
     ];
     if read_suffixes.iter().any(|s| method.ends_with(s)) || method.starts_with("auth.") || method == "app.status" {
         return None;
