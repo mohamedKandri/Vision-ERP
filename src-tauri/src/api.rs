@@ -1271,6 +1271,48 @@ pub mod tests {
             .to_string()
     }
 
+    /// Security guard: every API method (read from this file, so new ones are covered too)
+    /// refuses a kitchen user unless it is on the short list the kitchen needs.
+    #[test]
+    fn every_method_checks_permissions() {
+        let core = core_with_setup();
+        let kitchen = login(&core, "Youssef", "4444");
+        let allowed = [
+            "auth.me", "auth.logout", "auth.authorize", "auth.change_pin", "users.set_prefs", "settings.get", "taxes.list",
+            "permissions.get", "menu.get", "products.set_available", "orders.list", "orders.set_status", "print.problems", "print.job",
+            "print.retry", "print.cancel", "print.reroute", "kds.stations", "kds.board", "kds.toggle", "kds.bump", "kds.recall",
+            "ingredients.list", "stock.alerts", "stock.waste",
+        ];
+        let src = include_str!("api.rs");
+        let mut methods: Vec<&str> = Vec::new();
+        for line in src.lines() {
+            let l = line.trim_start();
+            if line.starts_with("        \"") && l.contains("\" =>") {
+                for part in l.split(" =>").next().unwrap().split(" | ") {
+                    methods.push(part.trim_matches('"'));
+                }
+            }
+        }
+        assert!(methods.len() > 100, "found {} methods", methods.len());
+        let public = ["app.status", "setup.init", "auth.users", "auth.login", "display.board"];
+        let mut checked = 0;
+        let mut reached = Vec::new();
+        for m in methods.iter().filter(|m| !public.contains(m) && !allowed.contains(m)) {
+            let r = dispatch(&core, Some(&kitchen), m, json!({}));
+            let code = r.as_ref().err().map(|e| e.code.to_string()).unwrap_or_else(|| "ok".into());
+            if code != "forbidden" {
+                reached.push(format!("{m} ({code})"));
+            }
+            checked += 1;
+        }
+        assert!(reached.is_empty(), "kitchen user reached: {reached:?}");
+        assert!(checked > 80);
+        // And without a session, nothing but the public methods answers.
+        let open: Vec<&&str> = methods.iter().filter(|m| !public.contains(m))
+            .filter(|m| dispatch(&core, None, m, json!({})).map(|_| true).unwrap_or_else(|e| e.code != "unauthorized")).collect();
+        assert!(open.is_empty(), "answers without a session: {open:?}");
+    }
+
     #[test]
     fn setup_once_then_status() {
         let core = Core::new(open_in_memory().unwrap());

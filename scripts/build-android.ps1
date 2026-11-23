@@ -56,4 +56,23 @@ Copy-Item "src-tauri\target\$($map.triple)\$profile\libburger_os_lib.so" $jni -F
 Set-Location "src-tauri\gen\android"
 .\gradlew.bat "assemble$($map.flavor)$Profile" -x "rustBuild$($map.flavor)$Profile" --console=plain
 if ($LASTEXITCODE) { throw "gradle failed" }
-Get-ChildItem -Recurse app\build\outputs\apk -Filter *.apk | ForEach-Object { $_.FullName }
+$apk = Get-ChildItem -Recurse app\build\outputs\apk -Filter *.apk | Where-Object { $_.FullName -like "*$profile*" } |
+  Sort-Object LastWriteTime -Descending | Select-Object -First 1
+if (-not $apk) { throw "no APK produced" }
+Set-Location $root
+$version = (Get-Content src-tauri\tauri.conf.json -Raw | ConvertFrom-Json).version
+$signed = Test-Path "src-tauri\gen\android\keystore.properties"
+$suffix = if ($Debug) { "-debug" } elseif ($signed) { "" } else { "-UNSIGNED" }
+New-Item -ItemType Directory -Force release | Out-Null
+$out = "release\burger-os-$version-$($map.abi)$suffix.apk"
+Copy-Item $apk.FullName $out -Force
+if (-not $Debug -and $signed) {
+  $bt = Get-ChildItem "$env:ANDROID_HOME\build-tools" | Sort-Object Name -Descending | Select-Object -First 1
+  & "$($bt.FullName)\apksigner.bat" verify --print-certs $out
+  if ($LASTEXITCODE) { throw "signature check failed" }
+  Write-Host "Signed release APK: $out"
+} elseif (-not $Debug) {
+  Write-Warning "No signing key (scripts\make-android-key.ps1 not run yet): $out is UNSIGNED and can't be installed as is."
+} else {
+  Write-Host "Debug APK: $out"
+}

@@ -98,6 +98,14 @@ pub fn check_file(path: &Path) -> ApiResult<i64> {
     let has_core: bool = c
         .query_row("SELECT COUNT(*) = 3 FROM sqlite_master WHERE type='table' AND name IN ('users','orders','settings')", [], |r| r.get(0))
         .unwrap_or(false);
+    // BURGER OS uses no triggers or views: a file that has some was not made by it, and a
+    // trigger would run its own SQL inside the shop's database after a restore.
+    let extra: i64 = c
+        .query_row("SELECT COUNT(*) FROM sqlite_master WHERE type IN ('trigger','view')", [], |r| r.get(0))
+        .unwrap_or(1);
+    if extra > 0 {
+        return Err(ApiError::new("bad_backup", "this file contains triggers or views"));
+    }
     match version {
         Some(v) if has_core && v >= 1 => {
             if v > db::MIGRATIONS.last().map(|m| m.version).unwrap_or(0) {
@@ -324,6 +332,12 @@ mod tests {
         let other = imp.join("other.db");
         Connection::open(&other).unwrap().execute_batch("CREATE TABLE t (x INTEGER);").unwrap();
         assert_eq!(check_file(&other).unwrap_err().code, "bad_backup");
+        // A real backup with a trigger added is refused.
+        let trap = imp.join("trap.db");
+        std::fs::copy(dir.join(&name), &trap).unwrap();
+        Connection::open(&trap).unwrap()
+            .execute_batch("CREATE TRIGGER t AFTER INSERT ON orders BEGIN UPDATE users SET role='owner'; END;").unwrap();
+        assert_eq!(check_file(&trap).unwrap_err().code, "bad_backup");
         assert_eq!(resolve(&dir, Some(&imp), "../live.db", "downloads").unwrap_err().code, "invalid");
         assert_eq!(resolve(&dir, None, "live.db", "backups").unwrap_err().code, "invalid");
         assert_eq!(crate::settings::get(&c, "shop_name").unwrap(), json!("Après"), "failed restores change nothing");

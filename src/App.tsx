@@ -343,7 +343,7 @@ function StatusBar({ user, version, app, onHome, onSearch, onLock }: {
       <button onClick={onHome} aria-label={t("home")} title={t("home")} className="flex h-10 w-10 items-center justify-center rounded-md hover:bg-white/10">
         <LayoutGrid className="h-5 w-5" />
       </button>
-      <b className="num text-white">{app ?? "BURGER/OS"}</b>
+      <b className={app ? "text-white" : "num text-white"}>{app ?? "BURGER/OS"}</b>
       <button onClick={onSearch} className="mx-auto flex h-9 w-full max-w-md items-center gap-2 rounded-md bg-white/10 px-3 text-start text-white/70 hover:bg-white/15">
         <Search className="h-4 w-4" />
         <span className="flex-1">{t("search_apps")}</span>

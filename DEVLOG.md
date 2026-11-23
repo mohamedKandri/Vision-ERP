@@ -783,3 +783,104 @@ Each phase records what was **verified** (by a test or by running the app) and w
 - Times use the device's current UTC offset for the whole range; a range across a clock
   change groups the hours after the change one hour off.
 - No database change in this phase: your test database is not touched by this phase.
+
+## Phase 9: customers, loyalty, backups, security review, Arabic check, release builds (2026-11-23)
+
+### Built
+- **Customers** (migration `0011_customers`, `customers.rs`):
+  - one customer per phone number, normalised ("+212 6..", "00212 6.." and "06 .." are the same);
+  - a new order with a phone links to the customer (created if new); a name or address typed
+    for the order becomes the customer's latest one;
+  - API `customers.lookup` (till), `customers.list/get/save` (`customers.manage`);
+  - **Clients** app: search, edit, orders, loyalty history, balance correction.
+- **Loyalty** (Settings: none / stamps / points), ledger `loyalty_moves`:
+  - stamps: products flagged `loyalty_stamp` (demo burgers, and existing products in a
+    "Burger" category on migration) earn one each when the order is fully paid; the item
+    given as a reward earns nothing;
+  - points: per MAD paid (rounded down);
+  - `sync_order` (idempotent, called from `orders::recompute` and `void`) earns on payment,
+    takes back on refund, gives a used reward back on void/refund/removal;
+  - **reward**: a fixed order discount ("Fidélité"): stamps = the most expensive eligible
+    item; points = up to the amount due. No manager PIN (the customer earned it), audited.
+    Blocked while another order discount is set (one order discount at a time);
+  - till: phone field for takeaway and delivery with live lookup (name/address filled in,
+    balance shown), loyalty strip with "Use the reward" on the order; receipts show the
+    balance after the order; product editor has "Earns a loyalty stamp".
+- **Backups** (`backup.rs`):
+  - SQLite online backup to `backups/` next to the database, written to a temporary file,
+    integrity-checked, then renamed; never overwrites;
+  - daily automatic backup on the Host (checked at start and every 30 minutes) when
+    `backup_daily` is on; automatic backups older than `backup_keep_days` are deleted;
+  - API `backup.list/create/copy_out` (`settings.manage`), `backup.restore` (**owner only**);
+  - restore: from `backups/` or a `.db` put in Downloads/BURGER-OS; refuses files that aren't
+    a BURGER OS database, are damaged, come from a newer version, or contain triggers/views;
+    makes a "before-restore" copy first, restores, migrates to the current schema, clears every
+    session (everyone logs in again) and tells every screen to reload;
+  - Settings → Backups card: list, back up now, copy to Downloads, restore with confirmation.
+- **Security review** (see below) and an automated permission test.
+- **Arabic / polish**: the app name in the top bar and small-caps labels no longer spread
+  Arabic letters apart (monospace font and letter spacing removed in RTL).
+- **Release builds**:
+  - Windows installer rebuilt (`src-tauri/target/release/bundle/nsis/BURGER OS_0.1.0_x64-setup.exe`);
+  - Android release signing: Gradle reads a git-ignored `keystore.properties`;
+    `scripts/make-android-key.ps1` creates the key on the owner's PC (owner's own password);
+    `scripts/build-android.ps1` copies the APK to `release/` with a clear name and verifies
+    the signature, or marks it `-UNSIGNED` when there's no key.
+
+### Security review
+Checked:
+- **Permissions**: every API method (read from `api.rs` itself, so future ones are included)
+  refuses a kitchen user except the ~25 the kitchen needs, and refuses everyone without a
+  session except the 5 public ones (new test `every_method_checks_permissions`).
+- **SQL**: no query is built from user input; table/column names in `format!` come from
+  fixed lists.
+- **LAN**: every request needs a paired device token (stored hashed); pairing closes after
+  5 wrong PINs; user logins lock after 5 wrong PINs; sessions expire when idle; tokens
+  come from a cryptographic RNG.
+- **Webview**: strict Content-Security-Policy; only the app's own IPC command is allowed
+  (no filesystem, shell or HTTP plugins); no `innerHTML` / `eval`.
+- **Files**: export and backup names are checked (no paths); restore validates the file.
+- **CSV**: text that starts with = + - @ is quoted (no formula injection in Excel).
+Fixed: a restored file could have carried SQL triggers that run later inside the shop's
+database; files with triggers or views are now refused (BURGER OS uses none).
+Accepted, by design: LAN traffic is plain HTTP inside the shop network; any logged-in user
+can see the print queue and retry a failed print; a cashier can look a customer up by phone
+(needed for delivery); backups contain PIN hashes (Argon2), so keep backup files private.
+
+### Verified
+- **Rust: 126 tests pass** (8 new): phone normalisation and points rounding; customers found
+  by phone and kept up to date, duplicates refused, search; stamps earned on payment, reward
+  = most expensive burger, given back when removed, on refund and on void, idempotent;
+  points capped by balance and amount due, manual adjustment never below zero, loyalty off,
+  blocked by another discount; backup names, pruning, daily once, restore round trip
+  (and back), damaged/foreign/trigger files refused, failed restores change nothing;
+  backup permissions (owner-only restore, sessions cleared, topic "all"); every method
+  checks permissions.
+- **Vitest: 108 pass** (new: loyalty helpers; receipt shows the reward and balance).
+  `tsc` clean.
+- **The real app, driven by a script, on a throwaway database**: 22 checks pass, no page
+  errors:
+  - till: typing "+212 612345678" finds Sara (saved as "06 12 34 56 78"), fills her name,
+    shows "Reward ready"; after adding a burger and sending, "Use the reward" makes it free
+    (total 0.00, 3 stamps used);
+  - Clients: list with balance; history shows earned and used; +2 stamps correction;
+    invalid phone refused with a message;
+  - backups: back up now, copy to Downloads (file exists), change a setting, restore →
+    login screen, setting back to its old value, a "before restore" copy exists; a manager
+    is refused;
+  - Arabic: 18 apps visited right-to-left, no untranslated text, no page errors.
+- Android release build without a key: BUILD SUCCESSFUL with the new signing config; with no key it produced `release/burger-os-0.1.0-arm64-v8a-UNSIGNED.apk` (10.3 MB) and warned, as intended. Not installed on a device.
+
+### Not verified / known issues
+- **Nothing has run on the tablet or with real printers yet** (see TODO.md, section 2).
+- The signing key isn't created: the owner runs `scripts/make-android-key.ps1` (it's a
+  credential only the owner should hold). Until then release APKs are unsigned.
+- The Windows installer isn't code-signed (SmartScreen warning on install).
+- A customer is only linked when the order is created with a phone number; adding a phone
+  to an existing order doesn't link it.
+- Only one order discount at a time: a manager discount and a loyalty reward can't be
+  combined on the same order.
+- The daily backup runs only while the Host app is open.
+- The network test (`lan_test`) is timing-sensitive: once in this phase it timed out when two
+  test runs overlapped on this PC; it passes on its own and in the normal full run.
+- Your desktop app was not updated in this phase (see TODO.md).

@@ -3,24 +3,28 @@
 A local-first POS + back office for one burger shop. It runs 100 % offline on Android
 POS terminals/tablets and on a Windows PC. There's no cloud, no account and no telemetry.
 
-> **Status: Phase 5 of 9.** You get setup, PIN login, staff and roles, permissions,
-> settings, taxes, the audit log, and the full menu (products, sizes, modifiers, combos,
-> out-of-stock board, happy hour), the till with payments, cash sessions (X/Z), and printing (receipts,
-> kitchen tickets, cash drawer), several devices on the Wi-Fi, the kitchen screen and the
-> customer screen. Stock, purchasing, reports and customers come in later phases (see [DEVLOG.md](DEVLOG.md)).
+> **Status: all 9 phases built.** Setup, PIN login, staff, roles and permissions; the menu
+> (sizes, modifiers, combos, happy hour); the till, payments and cash sessions (X/Z); printing;
+> several devices on the Wi-Fi with the kitchen and customer screens; stock, recipes and
+> purchasing; reports with CSV/PDF export; customers and loyalty; backups. What has and hasn't
+> been tested on real hardware is listed in [DEVLOG.md](DEVLOG.md) and [TODO.md](TODO.md).
 
 ## Install
 
 ### Windows (back-office PC)
 1. Run `BURGER OS_0.1.0_x64-setup.exe` (from `src-tauri/target/release/bundle/nsis/`).
+   The installer isn't code-signed, so Windows SmartScreen may say "Windows protected your PC":
+   click **More info → Run anyway**.
 2. Start **BURGER OS** from the Start menu.
 
 The database is stored at `%APPDATA%\ma.burgeros.app\burger-os.db`.
 
 ### Android (POS terminal / tablet)
+Use the signed APK from `release/` (`burger-os-<version>-arm64-v8a.apk`; see "Signing the
+Android app" below).
 1. Copy the APK to the device, or install it over USB:
    ```bash
-   adb install -r app-universal-release.apk
+   adb install -r release/burger-os-0.1.0-arm64-v8a.apk
    ```
 2. If you copy the file instead, allow "Install unknown apps" for your file manager once.
 3. Open **BURGER OS**.
@@ -173,6 +177,36 @@ In Appareil on the Host, **Retirer** disconnects a lost or stolen device.
 **Journal** (audit log): filter by dates, person, kind of action or a word (an order number,
 a reason), and export what you see as CSV.
 
+## Customers and loyalty
+
+- At the till, type the customer's **phone number** (takeaway or delivery). A known customer
+  is found at once: their name and address are filled in, with their loyalty balance. A new
+  number creates the customer when the order is sent.
+- **Clients** (managers): search by name, phone or address; edit; see each customer's orders
+  and loyalty history; correct a balance (with a reason, audited).
+- **Loyalty** (Settings → Loyalty), one of:
+  - **Stamps**: each product marked "Earns a loyalty stamp" (every burger in the demo menu;
+    change it in Menu → product) gives a stamp. With N stamps, the till shows **Use the
+    reward** and the most expensive eligible item of the order is free.
+  - **Points**: points per MAD paid; each point is worth a set amount off a later order.
+- Stamps and points are earned when the order is fully paid, and taken back if it is
+  refunded. A reward used on an order comes back if the order is cancelled or refunded, or if
+  the reward is removed. Using a reward needs no manager PIN (the customer earned it); it is
+  written to the audit log. The receipt shows the balance after the order.
+
+## Backups
+
+**Settings → Backups** (owner, or anyone given "settings"):
+- **Automatic**: one backup a day while the Host runs (turn it off in Settings → Backup).
+  Automatic backups older than the number of days you choose are deleted; manual ones are kept.
+- **Back up now**, then **Copy to Downloads** puts the file in `Downloads\BURGER-OS` (or
+  `Download/BURGER-OS` on Android). Copy it to a USB stick or another PC to keep it safe.
+- **Restore** (owner only) replaces all data with a backup. A "Before restore" backup of the
+  current data is made first, so you can go back. Everyone logs in again afterwards.
+  To restore a file from elsewhere, put the `.db` file in `Downloads\BURGER-OS` and it appears
+  in the list.
+- Backups live on the Host: `%APPDATA%\ma.burgeros.app\backups` on Windows.
+
 ## Printers
 
 **Imprimantes** (Owner): **Ajouter une imprimante**, choose the type, then **Test**.
@@ -222,8 +256,20 @@ powershell -ExecutionPolicy Bypass -File scripts/build-android.ps1
 ```
 To install it on a tablet connected over USB with USB debugging enabled:
 ```bash
-adb install -r release/burger-os-0.1.0-arm64-test.apk
+adb install -r release/burger-os-0.1.0-arm64-v8a.apk
 ```
+
+### Signing the Android app
+Android only installs signed apps, and every update must be signed with the **same key**.
+Create the key once, on the PC that builds the app; you choose the password:
+```bash
+powershell -ExecutionPolicy Bypass -File scripts/make-android-key.ps1
+```
+It writes the key to `%USERPROFILE%\BURGER-OS-signing\burger-os-release.jks` and a git-ignored
+`src-tauri/gen/android/keystore.properties`. **Back up that folder and the password**: without
+them, tablets can't update the app (they would have to uninstall it and lose their data).
+After that, `scripts/build-android.ps1` produces a signed `release/burger-os-<version>-arm64-v8a.apk`
+and checks its signature. Without a key it produces a file marked `-UNSIGNED`.
 
 ### Layout
 - `src/lib/money.ts`: pure money/VAT/discount/allocation logic (integer cents), tested in `money.test.ts`.
@@ -231,6 +277,8 @@ adb install -r release/burger-os-0.1.0-arm64-test.apk
 - `src-tauri/src/api.rs`: the single RPC dispatcher. The webview calls `rpc(method, params)`.
   In Phase 5 the LAN server calls the same function, so auth and permissions live in one place.
 - `src-tauri/migrations/`: forward-only SQL migrations.
+- `src-tauri/src/customers.rs` + `src/lib/loyalty.ts`: customers by phone, loyalty ledger (stamps or points), rewards.
+- `src-tauri/src/backup.rs`: daily/manual backups (SQLite online backup, checked), restore.
 - `src-tauri/src/reports.rs` + `src/lib/report.ts` + `src/lib/reportPdf.ts` + `src/lib/pdf.ts`: reports, CSV and PDF export.
 - `src-tauri/src/purchasing.rs` + `src/lib/purchasing.ts`: suppliers, purchase orders, goods receipts (weighted average cost), suggestions.
 - `src-tauri/src/stock.rs` + `src/lib/stock.ts`: stock quantities (thousandths of a unit), recipes, food cost; automatic deduction from orders.

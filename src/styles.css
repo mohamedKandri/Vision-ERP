@@ -66,3 +66,5 @@ input, textarea, select { user-select: text; }
 .bar-2 { background: var(--bar-2); color: var(--bar-text); }
 .sel { background: var(--sel); }
 .label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+/* Letter spacing pulls joined Arabic letters apart. */
+[dir="rtl"] .label { letter-spacing: 0; }
