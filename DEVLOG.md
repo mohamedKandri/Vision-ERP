@@ -948,3 +948,40 @@ Mocked up first (canvas "Caisse · style B"), then built.
 
 ### Not verified
 - Not tried on the tablet's screen size yet.
+
+## Kitchen screen in the "business" style (2026-11-23)
+
+Mocked up first (canvas "Cuisine · style B"), then built.
+
+### Changed (`KitchenScreen.tsx`)
+- **Tickets are cards in columns** (oldest first) instead of table rows.
+- **Card header coloured by waiting time**: light blue "On time", yellow "Almost late",
+  red "LATE" with a red outline. It shows the big order number, type, table or customer,
+  and the timer. The limits are the existing settings (`kds_warn_minutes`,
+  `kds_late_minutes`).
+- **Items have a large checkbox**; a ticked item is crossed out. Notes stay in a yellow
+  box. The **Terminé** button is full width and shows progress ("Terminé · 1/2"). With
+  "All stations" and several stations on a ticket, there is one button per station, as
+  before.
+- **Station tabs are underlined, with the number of tickets for each.** The screen now loads
+  every open ticket once and filters by station itself (same result as the per-station
+  query, since bumped items are already left out); this is what gives the counts.
+- **Summary chips**: how many tickets are on time, almost late, late. Recall sits next to
+  them.
+- **New "To prepare" panel**: everything not done yet on the tickets shown, added up by
+  product, so the grill can cook in batches.
+- The new-ticket beep now also sounds for the first ticket on an empty screen (before,
+  it only sounded once a ticket had been seen), and still not on first load or on
+  switching station.
+- Unchanged by design: ticking the last item of an order makes the order "ready", which
+  takes it off the board (existing rule).
+
+### Verified
+- `tsc` clean, Vitest 108 pass.
+- The real app on the demo database, driven by a script, light and dark (11 checks, all
+  pass, no page errors): tickets as cards, "To prepare" totals, counts on the tabs, the note
+  on the ticket, ticking an item, Terminé removes the ticket, the Grill tab hides fryer
+  items and shows "1/1", recall brings the ticket back.
+
+### Not verified
+- Not tried on the kitchen tablet or from across a real kitchen.

@@ -1,4 +1,4 @@
-import { Undo2 } from "lucide-react";
+import { Check, Undo2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, useToast } from "../components/ui";
 import { errorText, useT, type Key } from "../i18n";
@@ -23,7 +23,7 @@ function beep() {
   }
 }
 
-/** Kitchen Display: live tickets per station, tap items, bump tickets, recall. */
+/** Kitchen Display: live tickets as cards, tap items, bump tickets, recall. */
 export function KitchenScreen() {
   const t = useT();
   const toast = useToast();
@@ -35,10 +35,12 @@ export function KitchenScreen() {
       return null;
     }
   });
-  const [tickets, setTickets] = useState<Ticket[]>([]);
+  // Every open ticket, all stations: the tabs count per station and the view filters here.
+  const [all, setAll] = useState<Ticket[]>([]);
   const [limits, setLimits] = useState({ warn: 5, late: 10 });
   const [now, setNow] = useState(Date.now());
   const seen = useRef<Set<number>>(new Set());
+  const loaded = useRef(false);
 
   useEffect(() => {
     rpc<Station[]>("kds.stations").then(setStations, () => {});
@@ -49,18 +51,36 @@ export function KitchenScreen() {
 
   const load = useCallback(async () => {
     try {
-      const b = await rpc<Ticket[]>("kds.board", { station_id: station });
-      const fresh = b.some((x) => !seen.current.has(x.order_id));
-      if (fresh && seen.current.size) beep();
-      b.forEach((x) => seen.current.add(x.order_id));
-      setTickets(b);
+      const b = await rpc<Ticket[]>("kds.board", { station_id: null });
+      loaded.current = true;
+      setAll(b);
     } catch (e) {
       toast.error(errorText(t.lang, e));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [station]);
+  }, []);
   useEffect(() => void load(), [load]);
   useLive(["orders"], load, 5000);
+
+  // A ticket as this screen shows it: only the chosen station's items.
+  const forStation = (tk: Ticket, sid: number | null): Ticket | null => {
+    const items = sid === null ? tk.items : tk.items.filter((i) => i.station_id === sid);
+    return items.some((i) => !i.voided) ? { ...tk, items } : null;
+  };
+  const tickets = all.map((tk) => forStation(tk, station)).filter((x): x is Ticket => !!x);
+  const count = (sid: number | null) => all.filter((tk) => forStation(tk, sid)).length;
+
+  // Beep when a new ticket appears for this station. Not on the first load, not on switching station.
+  const seenFor = useRef<number | null | undefined>(undefined);
+  useEffect(() => {
+    if (!loaded.current) return;
+    const ids = tickets.map((tk) => tk.order_id);
+    if (seenFor.current === station && ids.some((id) => !seen.current.has(id))) beep();
+    if (seenFor.current !== station) seen.current = new Set();
+    ids.forEach((id) => seen.current.add(id));
+    seenFor.current = station;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [all, station]);
 
   const pick = (id: number | null) => {
     setStation(id);
@@ -72,67 +92,125 @@ export function KitchenScreen() {
   };
   const act = (p: Promise<unknown>) => p.then(load, (e) => toast.error(errorText(t.lang, e)));
 
+  const ageOf = (tk: Ticket) => Math.max(0, now - new Date(tk.sent_at).getTime());
+  const stateOf = (tk: Ticket): "ok" | "soon" | "late" => {
+    const mins = ageOf(tk) / 60000;
+    return mins >= limits.late ? "late" : mins >= limits.warn ? "soon" : "ok";
+  };
+  const states = tickets.map(stateOf);
+  const n = (st: string) => states.filter((x) => x === st).length;
+
+  // "To prepare": everything not done yet on the tickets shown, added up by product.
+  const todo = new Map<string, number>();
+  for (const tk of tickets) for (const it of tk.items) {
+    if (it.done || it.voided) continue;
+    const name = pickName(it.names, t.lang);
+    todo.set(name, (todo.get(name) ?? 0) + it.qty);
+  }
+  const todoList = [...todo.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+
+  const head = {
+    ok: "bg-[var(--sel)] text-[#0c3b5e] dark:text-[#cfe4fa]",
+    soon: "bg-[#f7d064] text-[#3b2a00]",
+    late: "bg-[#c50f1f] text-white",
+  };
+
   return (
     <div className="flex h-full flex-col">
-      <div className="flex flex-wrap items-center gap-2 border-b line p-2">
-        <StationBtn active={station === null} onClick={() => pick(null)} label={t("kds_all")} />
-        {stations.map((s) => <StationBtn key={s.id} active={station === s.id} onClick={() => pick(s.id)} label={pickName(s.names, t.lang)} />)}
-        <div className="ms-auto">
-          {station !== null && <Button onClick={() => act(rpc("kds.recall", { station_id: station }))}><Undo2 className="inline h-4 w-4" /> {t("kds_recall")}</Button>}
+      <div className="flex shrink-0 flex-wrap items-end gap-x-4 gap-y-2 border-b line bg-[var(--panel)] px-4">
+        <div role="tablist" aria-label={t("kds_stations")} className="flex gap-0.5 overflow-x-auto">
+          {[{ id: null as number | null, label: t("kds_all") }, ...stations.map((s) => ({ id: s.id as number | null, label: pickName(s.names, t.lang) }))].map((s) => (
+            <button key={s.id ?? "all"} role="tab" aria-selected={station === s.id} onClick={() => pick(s.id)}
+              className={`min-h-[52px] shrink-0 px-4 text-base ${station === s.id ? "font-semibold shadow-[inset_0_-3px_0_var(--color-brand)]" : "muted hov"}`}>
+              {s.label} <span className="muted font-normal">({count(s.id)})</span>
+            </button>
+          ))}
+        </div>
+        <div className="ms-auto flex flex-wrap items-center gap-2 pb-2">
+          {n("ok") > 0 && <span className="rounded-full bg-[#f1faf1] px-3 py-1 font-semibold text-[#0e700e] dark:bg-emerald-500/15 dark:text-emerald-300">{t("kds_n_on_time", { n: n("ok") })}</span>}
+          {n("soon") > 0 && <span className="rounded-full bg-[#fff4ce] px-3 py-1 font-semibold text-[#835b00] dark:bg-amber-500/15 dark:text-amber-300">{t("kds_n_soon", { n: n("soon") })}</span>}
+          {n("late") > 0 && <span className="rounded-full bg-[#fdf3f4] px-3 py-1 font-semibold text-[#b10e1c] dark:bg-red-500/15 dark:text-red-300">{t("kds_n_late", { n: n("late") })}</span>}
+          {station !== null && (
+            <Button onClick={() => act(rpc("kds.recall", { station_id: station }))}><Undo2 className="me-1 inline h-4 w-4 text-brand" />{t("kds_recall")}</Button>
+          )}
         </div>
       </div>
-      <div className="label grid grid-cols-[110px_90px_200px_1fr_170px] gap-3 border-b line px-3 py-2">
-        <span>N°</span><span>{t("kds_wait")}</span><span>{t("dev_kind")}</span><span>{t("tab_products")}</span><span />
-      </div>
-      <div className="min-h-0 flex-1 overflow-auto">
-        {tickets.map((tk) => {
-          const mins = Math.floor((now - new Date(tk.sent_at).getTime()) / 60000);
-          const secs = Math.floor((now - new Date(tk.sent_at).getTime()) / 1000) % 60;
-          const color = mins >= limits.late ? "text-red-500" : mins >= limits.warn ? "text-amber-500" : "text-emerald-500";
-          const stationsInTicket = [...new Set(tk.items.map((i) => i.station_id))];
-          return (
-            <div key={tk.order_id} className={`grid grid-cols-[110px_90px_200px_1fr_170px] items-start gap-3 border-b line px-3 py-3 ${mins >= limits.late ? "bg-red-500/5" : ""}`}>
-              <b className="num text-3xl">{tk.split_index ? `${tk.number}-${tk.split_index + 1}` : tk.number}</b>
-              <b className={`num text-xl ${color}`}>{String(mins).padStart(2, "0")}:{String(secs).padStart(2, "0")}</b>
-              <span className="text-[13px] font-semibold uppercase">
-                {t(`order_type_${tk.type}` as Key)}{tk.table_name ? ` · ${tk.table_name}` : ""}
-                {tk.customer_name && <span className="muted block normal-case">{tk.customer_name}</span>}
-              </span>
-              <div className="flex flex-col">
-                {tk.items.map((it) => (
-                  <button key={it.id} disabled={it.voided} onClick={() => act(rpc("kds.toggle", { id: it.id }))}
-                    className={`py-1 text-start ${it.done ? "opacity-40 line-through" : ""} ${it.voided ? "text-red-500 line-through opacity-60" : ""}`}>
-                    <span className="text-lg font-bold">{it.qty} × {pickName(it.names, t.lang)}</span>
-                    {(it.details[t.lang] ?? it.details.fr ?? []).length > 0 && (
-                      <span className="muted ms-2 text-[15px] font-semibold">{(it.details[t.lang] ?? it.details.fr ?? []).join(" · ")}</span>
-                    )}
-                    {it.note && <span className="ms-2 rounded-sm bg-yellow-300 px-2 py-0.5 text-sm font-bold text-stone-900">⚠ {it.note}</span>}
-                  </button>
-                ))}
-                {tk.note && <div className="mt-1 text-sm font-semibold text-amber-600">{t("pos_note")}: {tk.note}</div>}
+
+      <div className="flex min-h-0 flex-1 flex-wrap content-start items-start gap-4 overflow-auto p-4">
+        <div className="grid min-w-0 flex-[999_1_640px] grid-cols-[repeat(auto-fill,minmax(260px,1fr))] items-start gap-3.5">
+          {tickets.map((tk, idx) => {
+            const st = states[idx];
+            const age = ageOf(tk);
+            const mins = Math.floor(age / 60000);
+            const secs = Math.floor(age / 1000) % 60;
+            const live = tk.items.filter((i) => !i.voided);
+            const done = live.filter((i) => i.done).length;
+            const ticketStations = station !== null ? [station] : [...new Set(live.map((i) => i.station_id))];
+            return (
+              <article key={tk.order_id} data-testid="kds-ticket"
+                className={`card flex flex-col overflow-hidden rounded-2xl ${st === "late" ? "ring-2 ring-[#c50f1f]" : ""}`}>
+                <div className={`flex items-center justify-between gap-2 px-3.5 py-2.5 ${head[st]}`}>
+                  <span className="flex min-w-0 flex-col">
+                    <b className="num text-3xl leading-none">#{tk.split_index ? `${tk.number}-${tk.split_index + 1}` : tk.number}</b>
+                    <span className="mt-1 truncate text-[13px] font-semibold uppercase">
+                      {t(`order_type_${tk.type}` as Key)}{tk.table_name ? ` · ${tk.table_name}` : ""}{tk.customer_name ? ` · ${tk.customer_name}` : ""}
+                    </span>
+                  </span>
+                  <span className="flex shrink-0 flex-col items-end">
+                    <b className="num text-2xl" dir="ltr">{String(mins).padStart(2, "0")}:{String(secs).padStart(2, "0")}</b>
+                    <span className={`text-xs font-semibold ${st === "late" ? "uppercase" : ""}`}>{t(st === "ok" ? "kds_on_time" : st === "soon" ? "kds_soon" : "kds_late")}</span>
+                  </span>
+                </div>
+                <ul className="py-1">
+                  {tk.items.map((it) => {
+                    const details = it.details[t.lang] ?? it.details.fr ?? [];
+                    return (
+                      <li key={it.id} className="border-b line last:border-b-0">
+                        <button disabled={it.voided} aria-pressed={it.done} onClick={() => act(rpc("kds.toggle", { id: it.id }))}
+                          className={`hov flex min-h-[52px] w-full gap-3 px-3.5 py-2.5 text-start ${it.done ? "muted" : ""} ${it.voided ? "text-red-500 opacity-60" : ""}`}>
+                          <span aria-hidden="true" className={`mt-0.5 flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-md border-2 ${it.done ? "border-[#0e700e] bg-[#0e700e] text-white" : "border-[var(--input-bottom)]"}`}>
+                            {it.done && <Check className="h-4 w-4" strokeWidth={3} />}
+                          </span>
+                          <span className={`flex min-w-0 flex-col gap-0.5 ${it.done || it.voided ? "line-through" : ""}`}>
+                            <b className="text-lg">{it.qty} × {pickName(it.names, t.lang)}</b>
+                            {details.length > 0 && <span className="muted text-[15px] font-semibold">{details.join(" · ")}</span>}
+                            {it.note && <span className="mt-0.5 self-start rounded bg-yellow-300 px-2 py-0.5 text-sm font-bold text-stone-900">⚠ {it.note}</span>}
+                          </span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+                {tk.note && <div className="px-3.5 pb-1 text-sm font-semibold text-amber-700 dark:text-amber-400">{t("pos_note")}: {tk.note}</div>}
+                <div className="mt-auto flex flex-col gap-1.5 px-3.5 pb-3.5 pt-2">
+                  {ticketStations.map((sid) => (
+                    <Button key={sid} variant="primary" className="h-14 text-lg" onClick={() => act(rpc("kds.bump", { order_id: tk.order_id, station_id: sid }))}>
+                      {t("kds_bump")}
+                      {station === null && ticketStations.length > 1 ? ` · ${pickName(stations.find((s) => s.id === sid)?.names, t.lang)}` : ` · ${done}/${live.length}`}
+                    </Button>
+                  ))}
+                </div>
+              </article>
+            );
+          })}
+          {!tickets.length && <p className="muted col-span-full py-20 text-center text-2xl">{t("kds_empty")}</p>}
+        </div>
+
+        {todoList.length > 0 && (
+          <aside aria-label={t("kds_todo")} className="card min-w-0 flex-[1_1_240px] rounded-2xl lg:max-w-[300px]" data-testid="kds-todo">
+            <h2 className="px-4 pt-3.5 text-lg font-semibold">{t("kds_todo")}</h2>
+            <p className="muted px-4 pb-2 text-[13px]">{t("kds_todo_hint")}</p>
+            {todoList.map(([name, qty]) => (
+              <div key={name} className="flex items-baseline justify-between gap-2 border-t line px-4 py-2.5">
+                <span className="text-base font-semibold">{name}</span>
+                <b className="num text-2xl">{qty}</b>
               </div>
-              <div className="flex flex-col gap-1">
-                {(station !== null ? [station] : stationsInTicket).map((sid) => (
-                  <Button key={sid} variant="primary" className="h-12 text-[15px]" onClick={() => act(rpc("kds.bump", { order_id: tk.order_id, station_id: sid }))}>
-                    {t("kds_bump").toUpperCase()}{station === null ? ` · ${pickName(stations.find((s) => s.id === sid)?.names, t.lang)}` : ""}
-                  </Button>
-                ))}
-              </div>
-            </div>
-          );
-        })}
-        {!tickets.length && <p className="muted py-20 text-center text-2xl">{t("kds_empty")}</p>}
+            ))}
+          </aside>
+        )}
       </div>
       {toast.node}
     </div>
-  );
-}
-
-function StationBtn({ active, onClick, label }: { active: boolean; onClick: () => void; label: string }) {
-  return (
-    <button onClick={onClick} className={`h-10 rounded-sm border px-3 text-[13px] font-semibold ${active ? "border-brand bg-brand text-white" : "line bg-[var(--panel)]"}`}>
-      {label}
-    </button>
   );
 }
 
