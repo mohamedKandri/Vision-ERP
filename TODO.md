@@ -25,7 +25,7 @@ Legend: **[me]** I can do it here · **[you]** needs you (a device, a printer, a
       `scripts/build-android.ps1` makes the signed APK.
 - [ ] **Code-signing certificate for the Windows installer** [you]: optional, paid; without
       it Windows SmartScreen warns on install.
-- [ ] **Update the desktop app** to the Phase 9 build [me, on your go-ahead].
+- [x] **Desktop app updated** to the Phase 9 build with the new look (old one kept as `burger-os.old-phase8.exe`).
 
 ## 2. Testing on real hardware (all need you)
 
